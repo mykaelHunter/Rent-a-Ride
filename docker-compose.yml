@@ -1,0 +1,49 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    environment:
+      # Overrides backend/.env's mongo_uri so the API always talks to the
+      # 'mongo' service on the compose network, regardless of what's in the
+      # .env file (useful when the same .env is reused for non-Docker runs).
+      mongo_uri: mongodb://mongo:27017/rent-a-ride
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        VITE_PRODUCTION_BACKEND_URL: ${VITE_PRODUCTION_BACKEND_URL:-http://localhost:3000}
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
+        VITE_RAZORPAY_KEY_ID: ${VITE_RAZORPAY_KEY_ID:-}
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  mongo-data:

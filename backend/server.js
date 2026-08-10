@@ -9,29 +9,32 @@ import cors from 'cors'
 import cookieParser from "cookie-parser";
 import { cloudinaryConfig } from "./utils/cloudinaryConfig.js";
 
+// INC-003 fix: dotenv must load before anything reads process.env below.
+dotenv.config();
 
 const App = express();
 
+// INC-011 fix: configure Cloudinary once at startup instead of on every request.
+cloudinaryConfig();
 
 App.use(express.json());
 App.use(cookieParser())
 
-
-dotenv.config();
-const port = 3000;
+// INC-006 fix: bind to the platform-provided PORT when present, falling
+// back to 3000 for local dev.
+const port = process.env.PORT || 3000;
 
 mongoose
   .connect(process.env.mongo_uri)
-  .then(console.log("connected"))
+  .then(() => console.log("connected"))
   .catch((error) => console.error(error));
 
-  
-
-App.listen(port, () => {
-  console.log("server listening !");
-});
-
-const allowedOrigins = ['https://rent-a-ride-two.vercel.app', 'http://localhost:5173']; // Add allowed origins here
+// INC-008 fix: allowed origins are configurable via env instead of a single
+// hardcoded Vercel URL, so this can deploy to a different domain without a
+// source change. Falls back to sensible local/prod defaults if unset.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim())
+  : ['https://rent-a-ride-two.vercel.app', 'http://localhost:5173']);
 
 App.use(
   cors({
@@ -40,12 +43,6 @@ App.use(
     credentials: true, // Enables the Access-Control-Allow-Credentials header
   })
 );
-
-
-App.use('*', cloudinaryConfig);
-
-// App.get('/*', (req, res) => res.sendFile(resolve(__dirname, '../public/index.html')));
-
 
 App.use("/api/user", userRoute);
 App.use("/api/auth", authRoute);
@@ -62,4 +59,8 @@ App.use((err, req, res, next) => {
     message,
     statusCode,
   });
+});
+
+App.listen(port, () => {
+  console.log(`server listening on port ${port} !`);
 });
