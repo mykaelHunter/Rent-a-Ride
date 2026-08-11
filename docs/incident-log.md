@@ -27,6 +27,7 @@ paths are relative to repo root.
 | INC-017 | Low | ⬜ Open | Stray commented-out code |
 | INC-018 | Medium | ⬜ Open | `RAZORPAY_KEY_ID` read client-side without Vite's required `VITE_` prefix |
 | INC-019 | Low | ✅ Resolved | No Docker/compose setup for local parity or deployment |
+| INC-020 | Critical | ✅ Resolved | Dockerized client had no `/api` reverse proxy, breaking every fetch call |
 
 ---
 
@@ -189,6 +190,28 @@ build served via nginx, with an SPA fallback for client-side routing), and
 a root `docker-compose.yml` wiring up `mongo`, `backend`, and `client`
 services. `backend` reads secrets from `backend/.env`; `client`'s
 `VITE_*` build args come from a root `.env` (see `.env.example`).
+
+### INC-020 — Dockerized client had no `/api` reverse proxy ✅
+*(Found after deploying via `docker-compose`.)* Every fetch call in the
+client (`SignUp.jsx`, `SignIn.jsx`, `Vehicles.jsx`, etc.) uses a
+same-origin relative path like `fetch("/api/auth/signup")`. In local
+`npm run dev`, Vite's dev-server proxy (`vite.config.js`) forwards `/api`
+to the backend — but that proxy only exists in Vite's dev server, not in
+a production build. The `client` Dockerfile served the built app through
+plain nginx with no knowledge of `/api`, so those requests hit nginx's SPA
+fallback and got back `index.html` instead of JSON. `res.json()` then threw,
+which the client's generic `catch` block surfaced as "something went wrong"
+on register (and would affect every other API call the same way — sign in,
+booking, vehicle listing, etc.).
+
+Symptom seen: backend `GET /` returning "Cannot GET /" is expected (no root
+route is defined - the API only exposes `/api/*`), but it's worth noting
+here since it was reported alongside INC-020 and could look related.
+
+**Fix:** `client/Dockerfile`'s nginx config now proxies `location /api/`
+to `http://backend:3000` (the `backend` service's hostname on the
+`docker-compose` network), in addition to the existing SPA fallback for
+client-side routes.
 
 ---
 
