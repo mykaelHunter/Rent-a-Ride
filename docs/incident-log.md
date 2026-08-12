@@ -28,6 +28,7 @@ paths are relative to repo root.
 | INC-018 | Medium | ⬜ Open | `RAZORPAY_KEY_ID` read client-side without Vite's required `VITE_` prefix |
 | INC-019 | Low | ✅ Resolved | No Docker/compose setup for local parity or deployment |
 | INC-020 | Critical | ✅ Resolved | Dockerized client had no `/api` reverse proxy, breaking every fetch call |
+| INC-021 | Critical | ✅ Resolved | Non-sparse unique index on optional `phoneNumber` broke every signup after the first |
 
 ---
 
@@ -212,6 +213,29 @@ here since it was reported alongside INC-020 and could look related.
 to `http://backend:3000` (the `backend` service's hostname on the
 `docker-compose` network), in addition to the existing SPA fallback for
 client-side routes.
+
+### INC-021 — Non-sparse unique index on optional `phoneNumber` broke every signup after the first ✅
+*(Found while investigating a "vendor signup: something went wrong" report
+after rebuilding images with an updated Node Alpine version.)*
+`backend/models/userModel.js` declared `phoneNumber: { type: String,
+unique: true }` — optional (no `required`) but with a unique index and no
+`sparse` option. Neither `signUp` (`authController.js`) nor `vendorSignup`
+(`vendorController.js`) ever set `phoneNumber`. MongoDB's default
+behavior for a non-sparse unique index is to treat every document missing
+that field as having the same value, `null` — so the very first account
+ever created (regular user or vendor, whichever came first) claimed
+`phoneNumber: null` successfully, and every signup after that hit a
+duplicate-key error on that index. The client's generic catch block
+surfaced this as "something went wrong," with no indication of the real
+cause.
+
+**Fix:** added `sparse: true` to the `phoneNumber` field, which excludes
+documents that don't set the field from the uniqueness check entirely.
+Existing MongoDB deployments still need the old (non-sparse) index rebuilt
+— either drop the local dev volume (`docker compose down -v`) or drop just
+that index (`db.users.dropIndex('phoneNumber_1')`) and let Mongoose
+recreate it as sparse on next connect; the schema change alone does not
+retroactively fix an index that already exists in a running database.
 
 ---
 

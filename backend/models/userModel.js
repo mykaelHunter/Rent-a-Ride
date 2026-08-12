@@ -14,7 +14,14 @@ const userSchema = new mongoose.Schema(
     },
     phoneNumber:{
       type:String,
-      unique:true
+      unique:true,
+      // INC-021 fix: without `sparse`, Mongo's unique index treats every
+      // document that never sets phoneNumber as colliding on the same
+      // `null` value - only the first user/vendor signup ever succeeds,
+      // every one after it fails with a duplicate-key error (which the
+      // client shows as "something went wrong"). `sparse` excludes
+      // documents that don't have the field from the uniqueness check.
+      sparse:true
     },
     adress:{
       type:String,
