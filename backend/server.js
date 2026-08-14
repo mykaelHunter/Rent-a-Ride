@@ -49,6 +49,15 @@ App.use("/api/auth", authRoute);
 App.use("/api/admin",adminRoute);
 App.use("/api/vendor",vendorRoute)
 
+// INC-022: lightweight, unauthenticated health endpoint for the container
+// HEALTHCHECK (see backend/Dockerfile) and any orchestrator liveness probe.
+// Reports Mongo connection state instead of just "process is alive", since
+// a process that's up but can't reach the database isn't actually healthy.
+App.get("/healthz", (req, res) => {
+  const dbReady = mongoose.connection.readyState === 1; // 1 = connected
+  res.status(dbReady ? 200 : 503).json({ status: dbReady ? "ok" : "degraded" });
+});
+
 
 
 App.use((err, req, res, next) => {
