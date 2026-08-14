@@ -2,6 +2,11 @@ services:
   mongo:
     image: mongo:7
     restart: unless-stopped
+    # Official image's entrypoint already drops from root to the "mongodb"
+    # user internally (via gosu) before mongod starts - no extra `user:`
+    # needed here.
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "27017:27017"
     volumes:
@@ -30,6 +35,21 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
+    # Container hardening: already runs as the distroless ":nonroot" user
+    # (see backend/Dockerfile); the rest closes off what's left even if the
+    # app process itself were compromised.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
 
   client:
     build:
@@ -41,9 +61,27 @@ services:
         VITE_RAZORPAY_KEY_ID: ${VITE_RAZORPAY_KEY_ID:-}
     restart: unless-stopped
     ports:
-      - "5173:80"
+      # nginx-unprivileged listens on 8080, not 80 - binding <1024 needs
+      # root, which the image deliberately doesn't have.
+      - "5173:8080"
     depends_on:
       - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      # nginx (even unprivileged) needs somewhere writable for its pid file,
+      # client body buffers, and proxy/cache temp files at runtime.
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
 
 volumes:
   mongo-data:

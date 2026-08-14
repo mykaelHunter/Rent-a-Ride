@@ -29,6 +29,12 @@ paths are relative to repo root.
 | INC-019 | Low | ✅ Resolved | No Docker/compose setup for local parity or deployment |
 | INC-020 | Critical | ✅ Resolved | Dockerized client had no `/api` reverse proxy, breaking every fetch call |
 | INC-021 | Critical | ✅ Resolved | Non-sparse unique index on optional `phoneNumber` broke every signup after the first |
+| INC-022 | High | ✅ Resolved | Backend Dockerfile was single-stage and ran as root |
+| INC-023 | High | ✅ Resolved | Client (nginx) container ran its master process as root |
+| INC-024 | Medium | ✅ Resolved | Docker builds used `npm install` instead of locked, reproducible `npm ci` |
+| INC-025 | Medium | ✅ Resolved | Frontend/dev-only packages shipped inside backend's production dependencies |
+| INC-026 | High | ✅ Resolved | No `.dockerignore`, risking secrets baked into image layers |
+| INC-027 | Medium | ⬜ Open | Known vulnerabilities in production dependencies (nodemailer, image-size, uuid) |
 
 ---
 
@@ -239,8 +245,110 @@ retroactively fix an index that already exists in a running database.
 
 ---
 
-**Status:** all 5 Critical items and the highest-impact of the High/Medium
-items (INC-006, 007, 008, 011, 015, 019) are resolved. Remaining open items
-are hardening/cleanup and are not considered deployment blockers, with the
-exception of INC-009/INC-010, which are worth a follow-up pass before this
-handles real user data at scale.
+## August 14, 2026 — Container Hardening & Image Size Reduction
+
+Both Dockerfiles were reworked for size, base image currency, and running
+as non-root, plus a supporting cleanup of what actually ships in the
+backend's dependency tree.
+
+### INC-022 — Backend Dockerfile was single-stage and ran as root ✅
+`backend/Dockerfile` copied the repo, ran `npm install`, and ran the app
+in the same `node:24-alpine` layer used to install dependencies — no
+separation between build-time tooling and the runtime image, and no `USER`
+directive, so the container ran as root (uid 0) by default.
+
+**Fix:** split into two stages. Stage 1 (`node:24.19.0-alpine`) runs
+`apk upgrade` to patch any OS package CVEs baked into the base layer, then
+`npm ci --omit=dev` (reproducible install from the lockfile — see
+INC-024). Stage 2 copies only `node_modules` and the application code into
+`gcr.io/distroless/nodejs24-debian13:nonroot` — an image with no shell, no
+package manager, and no OS tooling beyond the Node runtime itself, running
+as uid/gid 65532 by default. `USER nonroot` is set explicitly even though
+the base image already defaults to it, so the non-root requirement is
+visible in the Dockerfile rather than implicit. Added a `HEALTHCHECK`
+hitting a new `/healthz` route (`backend/server.js`) that reports MongoDB
+connection state, not just process liveness.
+
+### INC-023 — Client (nginx) container ran its master process as root ✅
+`client/Dockerfile`'s runtime stage used the stock `nginx:1.27-alpine`
+image. Stock nginx images run their master process as root even though
+worker processes drop privileges — the container as a whole is still
+root-owned. The nginx version itself (1.27) was also from an nginx stable
+branch that has since been superseded.
+
+**Fix:** switched to `nginxinc/nginx-unprivileged:1.30-alpine` — same
+nginx build, repackaged to listen on port 8080 and run entirely as a
+non-root user (uid 101) with no additional configuration required. Updated
+the nginx config's `listen` directive from 80 to 8080 to match, and updated
+`docker-compose.yml`'s port mapping (`5173:8080`) accordingly. Added
+`server_tokens off;` to stop nginx announcing its exact version in
+response headers, and a `HEALTHCHECK` using `wget --spider`. The config
+itself was pulled out into its own `client/nginx.conf` file, copied in via
+`COPY nginx.conf /etc/nginx/conf.d/default.conf`, instead of living as an
+inline `printf` heredoc in the Dockerfile — easier to read and diff on
+its own.
+
+### INC-024 — Docker builds used `npm install` instead of a locked, reproducible `npm ci` ✅
+Neither the repo root nor `client/` had a committed `package-lock.json`
+(both are gitignored), so every Docker build re-resolved semver ranges
+against whatever was current on the npm registry at build time — different
+builds of the same source could pull different transitive dependency
+versions, undermining reproducibility and making "it worked yesterday"
+failures possible.
+
+**Fix:** generated `package-lock.json` for both the root and `client/`
+projects and switched both Dockerfiles from `npm install` to `npm ci`,
+which installs exactly what's in the lockfile and fails the build outright
+on any mismatch instead of silently re-resolving.
+
+### INC-025 — Frontend/dev-only packages shipped inside the backend's production dependencies ✅
+The root `package.json`'s `dependencies` (not `devDependencies`) included
+`nodemon`, `framer-motion`, `clsx`, and `tailwind-merge` — none of which
+are imported anywhere under `backend/` (confirmed by search). Because
+`npm ci --omit=dev` only excludes `devDependencies`, all four were being
+installed into the production image regardless, adding unnecessary size
+and extra transitive dependencies to track for vulnerabilities.
+
+**Fix:** moved all four to `devDependencies` in `package.json` and
+regenerated the lockfile. Verified with `npm ls --omit=dev` that none of
+the four appear in a production install. `npm run dev` (which still uses
+`nodemon`) is unaffected since dev tooling installs still include
+`devDependencies`.
+
+### INC-026 — No `.dockerignore`, risking secrets baked into image layers ✅
+Neither the repo root nor `client/` had a `.dockerignore`. `client/Dockerfile`
+does `COPY . .` for the build stage — without a `.dockerignore`, a local
+`.env` file, `.git` history, or `node_modules` sitting in the build context
+would be copied into the image's build layers. A layer isn't removed by a
+later layer deleting the file from the final filesystem view — it can still
+be extracted from the image history.
+
+**Fix:** added `.dockerignore` at the repo root (backend's build context)
+and inside `client/`, explicitly excluding `.env*` files (while allowing
+`*.env.example` through), `.git`, `node_modules`, and other local-only
+files.
+
+### INC-027 — Known vulnerabilities in production dependencies (Open) ⬜
+Running `npm audit --omit=dev` against the newly-generated root lockfile
+surfaced high-severity advisories in `nodemailer` (SMTP command injection
+and related issues across several CVEs) and `image-size` (via `datauri` →
+denial of service), plus a moderate advisory in `uuid`. All three fixes
+are available only via `npm audit fix --force`, which pulls in breaking
+major-version bumps (`nodemailer@9`, `datauri@0.8.0`, `uuid@14`). Left
+open this pass since upgrading them needs testing against the app's actual
+usage (nodemailer transport config, datauri's API surface) rather than a
+blind version bump alongside a container-hardening pass. The client's
+`npm audit` also reported 32 vulnerabilities, overwhelmingly in
+`react-scripts`' dev-time dependency tree (see INC-014) — these do not
+ship in the built static output, but they do add risk during the build
+stage itself.
+
+---
+
+**Status:** all 5 Critical items from the initial review, INC-020, and
+INC-021 are resolved — 7/7 Critical issues closed. The August 14 hardening
+pass resolved 5 additional items (INC-022 through INC-026) and surfaced one
+new open item (INC-027, dependency vulnerabilities, not container-related).
+Remaining open items are hardening/cleanup and are not considered
+deployment blockers, with the exception of INC-009/INC-010, which are worth
+a follow-up pass before this handles real user data at scale.

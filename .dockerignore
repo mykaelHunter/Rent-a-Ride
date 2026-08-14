@@ -1,0 +1,23 @@
+node_modules
+client/node_modules
+npm-debug.log*
+
+# Never let real secrets into a build context/layer - only *.example files
+# should ever be readable by `docker build`.
+.env
+.env.*
+!*.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+client/.env
+client/.env.*
+!client/.env.example
+
+.git
+.gitignore
+docs
+*.md
+.vscode
+.idea
+.DS_Store
