@@ -2,6 +2,7 @@ import mongoose, { disconnect } from "mongoose";
 import MasterData from '../../models/masterDataModel.js'
 import { v4 as uuidv4 } from 'uuid';
 import { errorHandler } from "../../utils/error.js";
+import logger from "../../utils/logger.js";
 
 const dummyData = [
 
@@ -36,7 +37,6 @@ const dummyData = [
 
     //cars
 
-
     //alto
     { id: uuidv4(), model: 'Alto 800', variant: 'manual', type: 'car' , brand:'maruthi' },
     { id: uuidv4(), model: 'Alto 800', variant: 'automatic', type: 'car' , brand:'maruthi' },
@@ -58,7 +58,6 @@ const dummyData = [
     { id: uuidv4(), model: 'MG HECTOR PLUS Petrol MT', variant: 'manual', type: 'car' , brand:'mg' },
     { id: uuidv4(), model: 'MG HECTOR PLUS Petrol AT', variant: 'automatic', type: 'car' , brand:'mg' },
     { id: uuidv4(), model: 'MG HECTOR PLUS Diesel MT', variant: 'manual', type: 'car' , brand:'mg' },
-
 
     { id: uuidv4(), model: 'MARUTI SWIFT Petrol AT', variant: 'automatic', type: 'car' , brand:'maruthi' },
     { id: uuidv4(), model: 'DATSUN REDI GO Petrol MT', variant: 'manual', type: 'car' , brand:'DATSUN' },
@@ -84,9 +83,9 @@ const dummyData = [
     try {
         // Insert the dummy data into the collection
         await MasterData.insertMany(dummyData);
-        console.log('Dummy data inserted successfully.');
+        logger.info('Dummy data inserted successfully.');
     } catch (error) {
-        console.error('Error inserting dummy data:', error);
+        logger.error({ err: error }, 'Error inserting dummy data');
     }
     finally{
         mongoose.disconnect();
@@ -109,5 +108,4 @@ const dummyData = [
   
 
   
-
 

@@ -7,15 +7,41 @@ import adminRoute from './routes/adminRoute.js'
 import vendorRoute from './routes/venderRoute.js'
 import cors from 'cors'
 import cookieParser from "cookie-parser";
+import pinoHttp from "pino-http";
 import { cloudinaryConfig } from "./utils/cloudinaryConfig.js";
+import logger from "./utils/logger.js";
 
 // INC-003 fix: dotenv must load before anything reads process.env below.
 dotenv.config();
+
+// Logging throughout the application: catch crashes that would otherwise
+// restart silently under `restart: unless-stopped` with no record of why.
+process.on("uncaughtException", (err) => {
+  logger.fatal({ err }, "uncaught exception - process will exit");
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  logger.fatal({ err: reason }, "unhandled promise rejection - process will exit");
+  process.exit(1);
+});
 
 const App = express();
 
 // INC-011 fix: configure Cloudinary once at startup instead of on every request.
 cloudinaryConfig();
+
+// Structured, one-line-per-request access log (method, path, status, response
+// time) written as JSON to stdout, ahead of every other route/middleware so
+// every request is logged - including ones that error out before reaching
+// a route handler.
+App.use(
+  pinoHttp({
+    logger,
+    autoLogging: {
+      ignore: (req) => req.url === "/healthz",
+    },
+  })
+);
 
 App.use(express.json());
 App.use(cookieParser())
@@ -24,10 +50,13 @@ App.use(cookieParser())
 // back to 3000 for local dev.
 const port = process.env.PORT || 3000;
 
-mongoose
-  .connect(process.env.mongo_uri)
-  .then(() => console.log("connected"))
-  .catch((error) => console.error(error));
+mongoose.connect(process.env.mongo_uri);
+
+const db = mongoose.connection;
+db.on("connected", () => logger.info("MongoDB connected"));
+db.on("error", (err) => logger.error({ err }, "MongoDB connection error"));
+db.on("disconnected", () => logger.warn("MongoDB disconnected"));
+db.on("reconnected", () => logger.info("MongoDB reconnected"));
 
 // INC-008 fix: allowed origins are configurable via env instead of a single
 // hardcoded Vercel URL, so this can deploy to a different domain without a
@@ -63,6 +92,13 @@ App.get("/healthz", (req, res) => {
 App.use((err, req, res, next) => {
   const statusCode = err.statusCode || 500;
   const message = err.message || "internal server error";
+  // Logging throughout the application: every error that reaches this
+  // handler is logged with request context, not just returned to the
+  // client - previously these failed silently server-side.
+  (req.log || logger).error(
+    { err, statusCode, method: req.method, url: req.originalUrl },
+    message
+  );
   return res.status(statusCode).json({
     succes: false,
     message,
@@ -71,5 +107,5 @@ App.use((err, req, res, next) => {
 });
 
 App.listen(port, () => {
-  console.log(`server listening on port ${port} !`);
+  logger.info(`server listening on port ${port} !`);
 });
