@@ -503,6 +503,23 @@ reach a local Jenkins instance); and Docker CLI access from the Jenkins
 agent (host install or a mounted `docker.sock`). Full details in
 `docs/JENKINS_SETUP.md`.
 
+### Follow-up — `package-lock.json` was gitignored, breaking `npm ci` in CI ✅
+
+**Issue encountered:** while getting the Jenkins pipeline running, the
+`Build Backend Image` stage failed at `COPY package.json package-lock.json
+./` with `"/package-lock.json": not found`. Both `.gitignore` (root) and
+the equivalent client rule excluded `package-lock.json`, so the lockfiles
+generated locally as part of INC-024 (switching Docker builds from
+`npm install` to `npm ci`) never made it into the repo — a fresh clone
+(such as Jenkins's checkout) has no lockfile for `npm ci` to install from,
+which is by design the same reproducibility gap INC-024 was meant to
+close.
+
+**Fix:** removed `package-lock.json` from `.gitignore` and committed both
+the root and `client/` lockfiles. `npm ci` now has the exact locked
+dependency tree available in every environment, including CI, rather than
+relying on whoever built the image locally having generated one first.
+
 ---
 
 **Status:** all 5 Critical items from the initial review, INC-020, and
