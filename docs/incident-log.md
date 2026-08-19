@@ -478,6 +478,33 @@ name.
 
 ---
 
+## August 19, 2026 — CI: Jenkins Pipeline (GitHub Webhook → Docker Hub)
+
+Added a `Jenkinsfile` (declarative pipeline) at the repo root and a
+companion `docs/JENKINS_SETUP.md` covering the plugins, credentials, and
+GitHub webhook configuration needed to run it. Not tied to a specific
+`INC-` code since it's new capability rather than a fix to existing code.
+
+**What it does:** on a push to the repo (via GitHub webhook, `githubPush()`
+trigger), Jenkins checks out the source, builds `backend/Dockerfile` and
+`client/Dockerfile` into separate images, logs in to Docker Hub using a
+stored credential, and pushes both images tagged with the Jenkins build
+number and `latest`. Client build args (`VITE_FIREBASE_API_KEY`,
+`VITE_RAZORPAY_KEY_ID`) are injected from Jenkins Secret Text credentials
+rather than committed anywhere. Local images are removed and the Docker
+Hub session is logged out in the `post { always {...} }` block regardless
+of build outcome.
+
+**Requires:** GitHub, Docker Pipeline, and Credentials Binding plugins; a
+`dockerhub-creds` (username + Docker Hub access token) credential plus the
+two `VITE_*` secret-text credentials; a GitHub webhook pointed at
+`/github-webhook/` on the Jenkins host (a tunnel is needed for this to
+reach a local Jenkins instance); and Docker CLI access from the Jenkins
+agent (host install or a mounted `docker.sock`). Full details in
+`docs/JENKINS_SETUP.md`.
+
+---
+
 **Status:** all 5 Critical items from the initial review, INC-020, and
 INC-021 are resolved — 7/7 Critical issues closed. The August 14 hardening
 pass resolved 5 additional items (INC-022 through INC-026) and surfaced one
