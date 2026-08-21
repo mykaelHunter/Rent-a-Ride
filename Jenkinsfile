@@ -84,21 +84,65 @@ pipeline {
                 """
             }
         }
+
+        stage('Pull Images from Docker Hub') {
+            steps {
+                // Drop the just-built local tags first so the following pull
+                // is a real round-trip to Docker Hub, not a local no-op —
+                // this is what actually gets deployed, matching what any
+                // other machine pulling these tags would get.
+                sh """
+                    docker rmi -f ${BACKEND_IMAGE}:${IMAGE_TAG} ${BACKEND_IMAGE}:latest \
+                                  ${CLIENT_IMAGE}:${IMAGE_TAG} ${CLIENT_IMAGE}:latest || true
+                    docker pull ${BACKEND_IMAGE}:${IMAGE_TAG}
+                    docker pull ${CLIENT_IMAGE}:${IMAGE_TAG}
+                """
+            }
+        }
+
+        stage('Deploy via Docker Compose') {
+            steps {
+                // docker-compose.yml's backend/client services read these
+                // env vars into their `image:` field (falling back to
+                // :latest / the default names for a plain local `docker
+                // compose up` with nothing set). No --build flag here —
+                // compose uses the images just pulled above.
+                sh """
+                    BACKEND_IMAGE=${BACKEND_IMAGE} \
+                    CLIENT_IMAGE=${CLIENT_IMAGE} \
+                    IMAGE_TAG=${IMAGE_TAG} \
+                    docker compose -f docker-compose.yml up -d
+                """
+            }
+        }
+
+        stage('Remove Local Images') {
+            steps {
+                // Frees disk space on the Jenkins host. Note: since the
+                // containers just started above are running from these
+                // exact images, Docker keeps the underlying layers alive
+                // until those containers are stopped/removed — this
+                // removes the dangling tag references now, and the actual
+                // layer space is reclaimed once the containers themselves
+                // are torn down (e.g. `docker compose down` + `docker
+                // image prune`).
+                sh """
+                    docker rmi -f ${BACKEND_IMAGE}:${IMAGE_TAG} ${BACKEND_IMAGE}:latest \
+                                  ${CLIENT_IMAGE}:${IMAGE_TAG} ${CLIENT_IMAGE}:latest || true
+                """
+            }
+        }
     }
 
     post {
         always {
             sh 'docker logout || true'
-            sh """
-                docker image rm ${BACKEND_IMAGE}:${IMAGE_TAG} ${BACKEND_IMAGE}:latest \
-                                ${CLIENT_IMAGE}:${IMAGE_TAG} ${CLIENT_IMAGE}:latest || true
-            """
         }
         success {
-            echo "Pushed ${BACKEND_IMAGE}:${IMAGE_TAG} and ${CLIENT_IMAGE}:${IMAGE_TAG} to Docker Hub."
+            echo "Deployed ${BACKEND_IMAGE}:${IMAGE_TAG} and ${CLIENT_IMAGE}:${IMAGE_TAG} via docker compose."
         }
         failure {
-            echo "Build failed — images were not pushed."
+            echo "Build failed — check which stage stopped the pipeline above."
         }
     }
 }

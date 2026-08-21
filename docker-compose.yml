@@ -35,6 +35,11 @@ services:
       start_period: 10s
 
   backend:
+    # `image:` lets `docker compose pull` fetch the exact tag Jenkins just
+    # pushed instead of rebuilding locally; `build:` is kept so a plain
+    # `docker compose up --build` still works for local dev with no env
+    # vars set.
+    image: ${BACKEND_IMAGE:-mykaelhunter/rent-a-ride-backend}:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -86,6 +91,8 @@ services:
           memory: 512M
 
   client:
+    # Same reasoning as backend's image: above.
+    image: ${CLIENT_IMAGE:-mykaelhunter/rent-a-ride-client}:${IMAGE_TAG:-latest}
     build:
       context: ./client
       dockerfile: Dockerfile
