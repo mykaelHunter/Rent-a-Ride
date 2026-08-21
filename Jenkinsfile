@@ -100,6 +100,17 @@ pipeline {
             }
         }
 
+        stage('Write backend/.env') {
+            steps {
+                // backend/.env is gitignored (it holds real secrets), so a
+                // fresh checkout never has it. Pull the real file from a
+                // Jenkins Secret File credential instead of committing it.
+                withCredentials([file(credentialsId: 'backend-env-file', variable: 'BACKEND_ENV_FILE')]) {
+                    sh 'cp "$BACKEND_ENV_FILE" backend/.env'
+                }
+            }
+        }
+
         stage('Deploy via Docker Compose') {
             steps {
                 // docker-compose.yml's backend/client services read these
@@ -137,6 +148,11 @@ pipeline {
     post {
         always {
             sh 'docker logout || true'
+            // backend/.env was written to the workspace from a credential
+            // above — remove it so the plaintext secret doesn't linger on
+            // disk between builds (the workspace itself isn't wiped by
+            // default between runs).
+            sh 'rm -f backend/.env || true'
         }
         success {
             echo "Deployed ${BACKEND_IMAGE}:${IMAGE_TAG} and ${CLIENT_IMAGE}:${IMAGE_TAG} via docker compose."
