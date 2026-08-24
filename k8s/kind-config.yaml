@@ -1,0 +1,24 @@
+# kind cluster topology for Rent-a-Ride on EC2
+# 1 control-plane node + 2 worker nodes
+#
+# Create with:
+#   kind create cluster --name rent-a-ride --config kind-config.yaml
+#
+# NodePorts 30080 (frontend) and 30300 (backend) are mapped through the
+# control-plane node onto the EC2 host itself, so the app is reachable at
+# http://<EC2-PUBLIC-IP>:30080 without needing a cloud LoadBalancer (which
+# kind on a bare EC2 instance can't provision).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: rent-a-ride
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080   # -> frontend NodePort
+        hostPort: 30080
+        protocol: TCP
+      - containerPort: 30300   # -> backend NodePort
+        hostPort: 30300
+        protocol: TCP
+  - role: worker
+  - role: worker

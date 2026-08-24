@@ -1,0 +1,48 @@
+# Non-secret backend config.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: rent-a-ride
+data:
+  PORT: "3000"
+  LOG_LEVEL: "info"
+  # In-cluster DNS name for the mongo Service defined in 10-mongo.yaml -
+  # Kubernetes resolves "mongo" to the mongo Service's ClusterIP for any
+  # pod in the same namespace.
+  mongo_uri: "mongodb://mongo:27017/rent-a-ride"
+  # Frontend is reachable at the EC2 host's public IP on NodePort 30080 -
+  # replace <EC2-PUBLIC-IP> before applying.
+  ALLOWED_ORIGINS: "http://<EC2-PUBLIC-IP>:30080"
+---
+# Secret values the backend needs (mirrors backend/.env.example).
+# DO NOT commit this file with real values filled in.
+#
+# Fill in the base64 values below, or skip this file entirely and create
+# the secret imperatively instead, e.g.:
+#   kubectl create secret generic backend-secret -n rent-a-ride \
+#     --from-literal=ACCESS_TOKEN=... \
+#     --from-literal=REFRESH_TOKEN=... \
+#     --from-literal=CLOUD_NAME=... \
+#     --from-literal=API_KEY=... \
+#     --from-literal=API_SECRET=... \
+#     --from-literal=EMAIL_HOST=... \
+#     --from-literal=EMAIL_PASSWORD=... \
+#     --from-literal=RAZORPAY_KEY_ID=... \
+#     --from-literal=RAZORPAY_SECRET=...
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backend-secret
+  namespace: rent-a-ride
+type: Opaque
+stringData:
+  ACCESS_TOKEN: "REPLACE_ME"
+  REFRESH_TOKEN: "REPLACE_ME"
+  CLOUD_NAME: "REPLACE_ME"
+  API_KEY: "REPLACE_ME"
+  API_SECRET: "REPLACE_ME"
+  EMAIL_HOST: "REPLACE_ME"
+  EMAIL_PASSWORD: "REPLACE_ME"
+  RAZORPAY_KEY_ID: "REPLACE_ME"
+  RAZORPAY_SECRET: "REPLACE_ME"
