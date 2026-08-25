@@ -2,6 +2,7 @@ import User from "../models/userModel.js";
 import bcryptjs from "bcryptjs";
 import { errorHandler } from "../utils/error.js";
 import Jwt from "jsonwebtoken";
+import logger from "../utils/logger.js";
 
 const expireDate = new Date(Date.now() + 3600000);
 
@@ -152,7 +153,7 @@ export const signIn = async (req, res, next) => {
     next();
   } catch (error) {
     next(error);
-    console.log(error);
+    logger.error({ err: error });
   }
 };
 

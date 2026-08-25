@@ -35,6 +35,10 @@ paths are relative to repo root.
 | INC-025 | Medium | ✅ Resolved | Frontend/dev-only packages shipped inside backend's production dependencies |
 | INC-026 | High | ✅ Resolved | No `.dockerignore`, risking secrets baked into image layers |
 | INC-027 | Medium | ⬜ Open | Known vulnerabilities in production dependencies (nodemailer, image-size, uuid) |
+| INC-028 | Medium | ✅ Resolved | No structured application logging — scattered `console.log`, some leaking request bodies, errors failing silently |
+| INC-029 | Medium | ✅ Resolved | Compose had no explicit backend healthcheck; client started before backend was actually ready |
+| INC-030 | Medium | ✅ Resolved | No Docker log rotation configured — container logs could grow unbounded |
+| INC-031 | Critical | ✅ Resolved | Backend HEALTHCHECK used bare `node`, unresolvable via PATH in distroless — container stuck permanently unhealthy |
 
 ---
 
@@ -345,10 +349,186 @@ stage itself.
 
 ---
 
+## August 17, 2026 — Healthchecks, Logging, and Restart Policy Review
+
+Follow-up pass focused specifically on observability and resilience:
+healthchecks on the database and backend containers, application-wide
+logging, and confirming restart policies are set where they're needed.
+
+### INC-028 — No structured application logging ✅
+Severity: Medium | Status: Resolved
+Files: `backend/utils/logger.js` (new), `backend/server.js`, and ~11
+controller/service files across `backend/controllers/` and
+`backend/services/`
+
+**Issue encountered:** the backend had no centralized logging. Error
+handling was ~40 scattered `console.log(error)` / `console.error(error)`
+calls with no consistent format, no timestamps, and no log levels — and no
+request logging at all, so there was no record of what was actually being
+called against the API. Several calls were debug leftovers with no
+diagnostic value (`console.log("hello")`, `console.log("hi")`), and one
+(`console.log(req.body)` in a booking controller) logged entire request
+bodies verbatim, a real risk of leaking user data into logs. The global
+error-handling middleware in `server.js` didn't log anything at all before
+responding — failures were only visible to the client, not in the server's
+own output.
+
+**Solution applied:**
+- Added `backend/utils/logger.js`, a structured JSON logger (`pino`)
+  writing to stdout — the natural fit for containers, since Docker's log
+  driver captures stdout/stderr directly with no file path to manage
+  inside the read-only, non-root backend container. Configured with
+  `redact` rules so passwords, tokens, and auth headers can never end up
+  in a log line even by accident.
+- Added `pino-http` request-logging middleware in `server.js`, ahead of
+  every route, so every request is logged (method, path, status, response
+  time) as structured JSON — except `/healthz`, excluded from access logs
+  since it fires every 30 seconds and adds noise rather than signal.
+- Added Mongoose connection lifecycle logging (`connected`, `error`,
+  `disconnected`, `reconnected`) and `uncaughtException` /
+  `unhandledRejection` handlers that log via `logger.fatal` before exiting
+  — important given `restart: unless-stopped` (INC-030 below): without
+  this, a crashing container just restarts silently with no record of why.
+- The global error-handling middleware now logs every error it handles,
+  with request context (method, URL, status code), before responding to
+  the client.
+- Swept all ~40 existing `console.*` calls across `backend/controllers/`
+  and `backend/services/`: error-context calls converted to
+  `logger.error(...)`, informational ones to `logger.info(...)`, and pure
+  debug leftovers (including the one logging raw request bodies) deleted
+  outright.
+- Verified `pino`/`pino-http` introduce no native addons (checked via
+  `find node_modules -name "*.node"`) — required since the backend's
+  `node_modules` are built on Alpine (musl libc) and copied into a
+  distroless (glibc) runtime image; a native addon would silently break
+  across that boundary.
+
+### INC-029 — Compose had no explicit backend healthcheck; client started before backend was ready ✅
+Severity: Medium | Status: Resolved
+Files: `docker-compose.yml`
+
+**Issue encountered:** `backend/Dockerfile` already had a `HEALTHCHECK`
+instruction (added during the August 14 hardening pass), and Mongo already
+had an explicit `healthcheck:` block in `docker-compose.yml` — but the
+backend service itself had no matching `healthcheck:` override in compose,
+and `client`'s `depends_on: [backend]` only waited for the backend
+container to *start*, not to actually be ready (Mongo-connected and
+serving traffic). In a slow-starting environment, the client could come up
+before the backend was able to serve any request.
+
+**Solution applied:** added an explicit `healthcheck:` block to the
+`backend` service in `docker-compose.yml` (same check as the Dockerfile's,
+made visible at the compose level for consistency with `mongo`'s), and
+changed `client`'s `depends_on` to `backend: condition: service_healthy` —
+the client container now only starts once the backend's `/healthz` check
+is passing.
+
+### INC-030 — No Docker log rotation configured ✅
+Severity: Medium | Status: Resolved
+Files: `docker-compose.yml`
+
+**Issue encountered:** none of the three services had a `logging:` driver
+configuration, so Docker's default `json-file` driver was in play with no
+size or file cap — container logs (now considerably more verbose thanks to
+INC-028's request logging) could grow unbounded and, over a long-running
+deployment, fill the host disk.
+
+**Solution applied:** added a shared `x-logging` anchor (`json-file`
+driver, `max-size: 10m`, `max-file: 3` — 30MB cap per container) applied
+to `mongo`, `backend`, and `client`.
+
+### Restart policies — confirmed, no change needed
+All three services (`mongo`, `backend`, `client`) already had
+`restart: unless-stopped` set during the August 14 hardening pass. Reviewed
+again as part of this pass and confirmed no additional service needs a
+different policy (no one-off/init containers exist in this compose file
+that should run-once-and-exit).
+
+### INC-031 — Backend HEALTHCHECK used bare `node`, unresolvable via PATH in distroless ✅
+Severity: Critical | Status: Resolved
+Files: `backend/Dockerfile`, `docker-compose.yml`
+
+**Symptom:** after rebuilding with the INC-028–030 changes,
+`docker compose up` failed with `Container rent-a-ride-backend-1 Error
+dependency backend failed to start`. `docker compose logs backend` showed
+the app itself starting cleanly — `server listening on port 3000` and
+`MongoDB connected` both logged — so the application was never the
+problem.
+
+**Root cause:** the backend's `HEALTHCHECK` (both in `backend/Dockerfile`
+and mirrored in `docker-compose.yml`, added as part of INC-022/INC-029)
+invoked the health check script as `CMD ["node", "-e", "..."]` — a bare
+command name. Distroless's own `ENTRYPOINT` is hardcoded to the Node
+binary's absolute path (`/nodejs/bin/node`), set at the base image level
+and never resolved via `PATH` — which is why the application itself
+started fine. But a bare command name in an exec-form `CMD`/`HEALTHCHECK`
+instruction *does* require a `PATH` lookup, and that isn't guaranteed to
+resolve inside a distroless image. The healthcheck process itself
+therefore failed to launch on every attempt, permanently marking the
+otherwise-healthy backend container as unhealthy — which, now that
+`client`'s `depends_on` correctly gates on `service_healthy` (INC-029),
+blocked the whole stack from starting. This bug existed since INC-022
+(August 14) but was invisible until INC-029 made anything actually depend
+on the backend's health status.
+
+**Fix:** changed both the Dockerfile's `HEALTHCHECK` and the compose
+file's mirrored `healthcheck.test` to invoke the Node binary by its
+absolute path, `/nodejs/bin/node`, instead of the bare `node` command
+name.
+
+---
+
+## August 19, 2026 — CI: Jenkins Pipeline (GitHub Webhook → Docker Hub)
+
+Added a `Jenkinsfile` (declarative pipeline) at the repo root and a
+companion `docs/JENKINS_SETUP.md` covering the plugins, credentials, and
+GitHub webhook configuration needed to run it. Not tied to a specific
+`INC-` code since it's new capability rather than a fix to existing code.
+
+**What it does:** on a push to the repo (via GitHub webhook, `githubPush()`
+trigger), Jenkins checks out the source, builds `backend/Dockerfile` and
+`client/Dockerfile` into separate images, logs in to Docker Hub using a
+stored credential, and pushes both images tagged with the Jenkins build
+number and `latest`. Client build args (`VITE_FIREBASE_API_KEY`,
+`VITE_RAZORPAY_KEY_ID`) are injected from Jenkins Secret Text credentials
+rather than committed anywhere. Local images are removed and the Docker
+Hub session is logged out in the `post { always {...} }` block regardless
+of build outcome.
+
+**Requires:** GitHub, Docker Pipeline, and Credentials Binding plugins; a
+`dockerhub-creds` (username + Docker Hub access token) credential plus the
+two `VITE_*` secret-text credentials; a GitHub webhook pointed at
+`/github-webhook/` on the Jenkins host (a tunnel is needed for this to
+reach a local Jenkins instance); and Docker CLI access from the Jenkins
+agent (host install or a mounted `docker.sock`). Full details in
+`docs/JENKINS_SETUP.md`.
+
+### Follow-up — `package-lock.json` was gitignored, breaking `npm ci` in CI ✅
+
+**Issue encountered:** while getting the Jenkins pipeline running, the
+`Build Backend Image` stage failed at `COPY package.json package-lock.json
+./` with `"/package-lock.json": not found`. Both `.gitignore` (root) and
+the equivalent client rule excluded `package-lock.json`, so the lockfiles
+generated locally as part of INC-024 (switching Docker builds from
+`npm install` to `npm ci`) never made it into the repo — a fresh clone
+(such as Jenkins's checkout) has no lockfile for `npm ci` to install from,
+which is by design the same reproducibility gap INC-024 was meant to
+close.
+
+**Fix:** removed `package-lock.json` from `.gitignore` and committed both
+the root and `client/` lockfiles. `npm ci` now has the exact locked
+dependency tree available in every environment, including CI, rather than
+relying on whoever built the image locally having generated one first.
+
+---
+
 **Status:** all 5 Critical items from the initial review, INC-020, and
 INC-021 are resolved — 7/7 Critical issues closed. The August 14 hardening
 pass resolved 5 additional items (INC-022 through INC-026) and surfaced one
 new open item (INC-027, dependency vulnerabilities, not container-related).
-Remaining open items are hardening/cleanup and are not considered
+The August 17 pass resolved 3 more (INC-028 through INC-030) covering
+logging, healthcheck wiring, and log rotation, plus one further Critical
+fix (INC-031) found while validating that pass — 8/8 Critical issues now
+closed. Remaining open items are hardening/cleanup and are not considered
 deployment blockers, with the exception of INC-009/INC-010, which are worth
 a follow-up pass before this handles real user data at scale.

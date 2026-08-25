@@ -1,6 +1,7 @@
 import Booking from "../../models/BookingModel.js";
 import Vehicle from "../../models/vehicleModel.js";
 import { errorHandler } from "../../utils/error.js";
+import logger from "../../utils/logger.js";
 
 export const allBookings = async (req, res, next) => {
   try {
@@ -26,7 +27,7 @@ export const allBookings = async (req, res, next) => {
 
     res.status(200).json(bookings);
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "error in allBookings"));
   }
 };
@@ -51,7 +52,7 @@ export const changeStatus = async (req, res, next) => {
     }
     res.status(200).json({ message: "status changed" });
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "error in changeStatus"));
   }
 };

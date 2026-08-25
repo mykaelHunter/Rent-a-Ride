@@ -4,6 +4,7 @@ import Vehicle from "../../models/vehicleModel.js";
 
 import { uploader } from "../../utils/cloudinaryConfig.js";
 import { dataUri } from "../../utils/multer.js";
+import logger from "../../utils/logger.js";
 
 //admin addVehicle
 export const addProduct = async (req, res, next) => {
@@ -51,9 +52,7 @@ export const addProduct = async (req, res, next) => {
             });
             uploadedImages.push(result.secure_url);
           } catch (error) {
-            console.log(error, {
-              message: "error while uploading to cloudinary",
-            });
+            logger.error({ err: error }, "error while uploading to cloudinary");
           }
         })
       );
@@ -97,14 +96,15 @@ export const addProduct = async (req, res, next) => {
           return next(errorHandler(409, "product already exists"));
         }
 
-        console.log(error);
+        logger.error({ err: error });
         next(errorHandler(500, "product not uploaded"));
       }
     } catch (error) {
       next(errorHandler(500, "could not upload image to cloudinary"));
     }
   } catch (error) {
-    next(errorHandler(400, "vehicle failed to add "), console.log(error));
+    logger.error({ err: error }, "vehicle failed to add");
+    next(errorHandler(400, "vehicle failed to add "));
   }
 };
 
@@ -119,7 +119,7 @@ export const showVehicles = async (req, res, next) => {
 
     res.status(200).json(vehicles);
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "something went wrong"));
   }
 };
@@ -227,7 +227,7 @@ export const editVehicle = async (req, res, next) => {
       }
     }
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "something went wrong"));
   }
 };

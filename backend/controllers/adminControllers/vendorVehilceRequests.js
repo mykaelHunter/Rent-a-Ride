@@ -1,5 +1,6 @@
 import Vehicle from "../../models/vehicleModel.js";
 import { errorHandler } from "../../utils/error.js";
+import logger from "../../utils/logger.js";
 
 //Vendor vehicle request
 export const fetchVendorVehilceRequests = async (req, res, next) => {
@@ -24,7 +25,7 @@ export const fetchVendorVehilceRequests = async (req, res, next) => {
       res.status(200).json(vendorRequests);
     }
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "error while fetchVendorVehicleRequests"));
   }
 };
@@ -53,7 +54,7 @@ export const approveVendorVehicleRequest = async (req, res, next) => {
 
     res.status(200).json(approvedVendor);
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "error while approveing vendor"));
   }
 };

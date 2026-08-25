@@ -1,7 +1,23 @@
+x-logging: &default-logging
+  # Every container logs JSON to stdout/stderr (mongo natively, backend via
+  # pino, nginx via its default access/error log format) - Docker's
+  # json-file driver captures that either way. Without a size/file cap the
+  # log file grows unbounded and can fill the host disk; this rotates at
+  # 10MB x 3 files (30MB max) per container.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   mongo:
     image: mongo:7
+    # No dependencies of its own, but it's the one every other service
+    # needs - if it dies, restarting it automatically is what keeps
+    # backend's healthcheck (and therefore client's startup gate) able to
+    # recover without manual intervention.
     restart: unless-stopped
+    logging: *default-logging
     # Official image's entrypoint already drops from root to the "mongodb"
     # user internally (via gosu) before mongod starts - no extra `user:`
     # needed here.
@@ -16,12 +32,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   backend:
+    # `image:` lets `docker compose pull` fetch the exact tag Jenkins just
+    # pushed instead of rebuilding locally; `build:` is kept so a plain
+    # `docker compose up --build` still works for local dev with no env
+    # vars set.
+    image: ${BACKEND_IMAGE:-mykaelhunter/rent-a-ride-backend}:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: backend/Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     env_file:
       - backend/.env
     environment:
@@ -30,11 +53,27 @@ services:
       # .env file (useful when the same .env is reused for non-Docker runs).
       mongo_uri: mongodb://mongo:27017/rent-a-ride
       PORT: 3000
+      # Structured JSON logs at "info" by default; override to "debug" for
+      # local troubleshooting without touching code.
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "3000:3000"
     depends_on:
       mongo:
         condition: service_healthy
+    # Mirrors backend/Dockerfile's own HEALTHCHECK instruction - defined
+    # explicitly here too (rather than relying only on the image default)
+    # so it's visible next to the other services' healthchecks, and so
+    # `client`'s depends_on below can gate on it via service_healthy.
+    healthcheck:
+      # Absolute path to node, not bare "node" - see backend/Dockerfile's
+      # HEALTHCHECK comment (INC-031) for why a bare command name fails to
+      # resolve here even though the app itself runs fine.
+      test: ["CMD", "/nodejs/bin/node", "-e", "require('http').get('http://127.0.0.1:3000/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     # Container hardening: already runs as the distroless ":nonroot" user
     # (see backend/Dockerfile); the rest closes off what's left even if the
     # app process itself were compromised.
@@ -52,6 +91,8 @@ services:
           memory: 512M
 
   client:
+    # Same reasoning as backend's image: above.
+    image: ${CLIENT_IMAGE:-mykaelhunter/rent-a-ride-client}:${IMAGE_TAG:-latest}
     build:
       context: ./client
       dockerfile: Dockerfile
@@ -60,12 +101,26 @@ services:
         VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
         VITE_RAZORPAY_KEY_ID: ${VITE_RAZORPAY_KEY_ID:-}
     restart: unless-stopped
+    logging: *default-logging
     ports:
       # nginx-unprivileged listens on 8080, not 80 - binding <1024 needs
       # root, which the image deliberately doesn't have.
       - "5173:8080"
     depends_on:
-      - backend
+      # Wait for the backend to actually be healthy (Mongo-connected and
+      # serving /healthz), not just "container started" - avoids a window
+      # where the client is up but every API call fails because the
+      # backend is still booting.
+      backend:
+        condition: service_healthy
+    # Mirrors client/Dockerfile's own HEALTHCHECK instruction, defined
+    # explicitly here for the same visibility reason as backend's above.
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     security_opt:
       - no-new-privileges:true
     cap_drop:

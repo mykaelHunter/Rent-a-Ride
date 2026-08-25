@@ -1,0 +1,33 @@
+# Non-secret Mongo settings.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongo-config
+  namespace: rent-a-ride
+data:
+  MONGO_INITDB_DATABASE: "rent-a-ride"
+  MONGO_HOST: "mongo-0.mongo.rent-a-ride.svc.cluster.local"
+  MONGO_PORT: "27017"
+---
+# Mongo root credentials. Consumed by:
+#   - the mongo StatefulSet itself (MONGO_INITDB_ROOT_USERNAME/PASSWORD,
+#     which the official mongo image uses to create the root user on
+#     first init)
+#   - the backend, which builds its mongo_uri from these same values so
+#     the password only ever lives in one Secret, not duplicated in two
+#     places that could drift apart.
+#
+# Replace the stringData values below before applying, or create this
+# imperatively instead and skip applying this Secret block:
+#   kubectl create secret generic mongo-credentials -n rent-a-ride \
+#     --from-literal=MONGO_INITDB_ROOT_USERNAME=rentaride_admin \
+#     --from-literal=MONGO_INITDB_ROOT_PASSWORD='<a real generated password>'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mongo-credentials
+  namespace: rent-a-ride
+type: Opaque
+stringData:
+  MONGO_INITDB_ROOT_USERNAME: "REPLACE_ME"
+  MONGO_INITDB_ROOT_PASSWORD: "REPLACE_ME"
