@@ -7,4 +7,6 @@ resources:
   - 11-mongo-statefulset.yaml
   - 20-backend-config.yaml
   - 21-backend.yaml
+  - 22-backend-hpa.yaml
   - 30-frontend.yaml
+  - 32-frontend-hpa.yaml
