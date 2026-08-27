@@ -11,7 +11,7 @@ Everything else in this file is reference material.
 
 | File | Purpose |
 |---|---|
-| `kind-config.yaml` | 1 control-plane + 2 worker node cluster, with host ports 30080/30300 mapped in |
+| `kind-config.yaml` | 1 control-plane + 2 worker node cluster; control-plane labeled `ingress-ready=true` and maps host ports 30080/30300 (app) + 31080/31443 (ingress, via per-pod `hostPort` binding — see [Ingress](#ingress-nginx-ingress-controller) for why the label alone isn't enough to guarantee the controller lands there) |
 | `00-namespace.yaml` | `rent-a-ride` namespace |
 | `10-mongo-config.yaml` | Mongo non-secret ConfigMap only (`mongo-config`) |
 | `11-mongo-statefulset.yaml` | Mongo 7 StatefulSet with a per-pod PVC (`volumeClaimTemplates`) + headless Service |
@@ -20,6 +20,7 @@ Everything else in this file is reference material.
 | `22-backend-hpa.yaml` | HorizontalPodAutoscaler for the backend Deployment (CPU + memory) |
 | `30-frontend.yaml` | Frontend (nginx) Deployment + NodePort Service (30080, main entry point) |
 | `32-frontend-hpa.yaml` | HorizontalPodAutoscaler for the frontend Deployment (CPU) |
+| `41-ingress.yaml` | Ingress routing `/` → frontend, `/api` → backend, via the nginx Ingress controller |
 | `kustomization.yaml` | Lets you `kubectl apply -k .` everything **except Secrets** at once |
 | `secret-templates/mongo-credentials.yaml.example` | Reference only — shows the shape of the `mongo-credentials` Secret. Never applied. |
 | `secret-templates/backend-secret.yaml.example` | Reference only — shows the shape of the `backend-secret` Secret. Never applied. |
@@ -57,12 +58,20 @@ MONGO_USER=rentaride_admin
 MONGO_PASS=$(openssl rand -base64 24 | tr -d '"'\''`$\\')   # no quote/backtick/$ chars - see note below
 echo "Generated Mongo password: $MONGO_PASS"   # save this somewhere safe now
 
+# URL-encode the password for embedding in the mongo_uri connection
+# string - a raw password can contain URI-special characters (@, :, /,
+# %, +) even after the shell-safety filter above, which strips a
+# different set of characters for a different reason. A connection
+# string parses these as separators/escapes regardless of shell context,
+# so the copy embedded in mongo_uri below needs its own encoding pass.
+MONGO_PASS_ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$MONGO_PASS")
+
 kubectl create secret generic mongo-credentials -n rent-a-ride \
   --from-literal=MONGO_INITDB_ROOT_USERNAME="$MONGO_USER" \
   --from-literal=MONGO_INITDB_ROOT_PASSWORD="$MONGO_PASS"
 
 kubectl create secret generic backend-secret -n rent-a-ride \
-  --from-literal=mongo_uri="mongodb://${MONGO_USER}:${MONGO_PASS}@mongo-0.mongo.rent-a-ride.svc.cluster.local:27017/rent-a-ride?authSource=admin" \
+  --from-literal=mongo_uri="mongodb://${MONGO_USER}:${MONGO_PASS_ENCODED}@mongo-0.mongo.rent-a-ride.svc.cluster.local:27017/rent-a-ride?authSource=admin" \
   --from-literal=ACCESS_TOKEN='<real value>' \
   --from-literal=REFRESH_TOKEN='<real value>' \
   --from-literal=CLOUD_NAME='<real value>' \
@@ -74,6 +83,16 @@ kubectl create secret generic backend-secret -n rent-a-ride \
   --from-literal=RAZORPAY_SECRET='<real value>'
 ```
 
+Note: `mongo-credentials` itself stores the **raw, unencoded** password —
+that's what mongod's own auth uses directly, not parsed through a URI, so
+it must NOT be URL-encoded there. Only the copy embedded inside
+`mongo_uri` needs encoding. Getting this backwards (encoding the raw
+Secret, or forgetting to encode the URI copy) is exactly what causes a
+`MongoParseError: Password contains unescaped characters` crash-loop on
+first deploy, even with the shell-safe generator above — that filter
+protects against shell/`sh -c` breakage, not URI parsing, and the two
+character sets that matter aren't the same.
+
 Replace every `<real value>` with the actual credential — the same ones
 that would go into `backend/.env` for a Docker Compose deploy (Cloudinary,
 Razorpay, email, JWT signing values). **Do not paste a literal
@@ -83,7 +102,10 @@ downstream that catches it.
 *Why the password generator excludes quotes/backticks/`$`:* those
 characters break shell interpolation (and, separately, the Mongo probe's
 `sh -c` eval string) if they end up embedded in the password. Simpler to
-avoid them entirely than to escape through three layers correctly.
+avoid them entirely than to escape through three layers correctly. This
+is a separate concern from the URI-encoding step above — a password can
+be shell-safe and still be URI-unsafe (e.g. `@` or `+`), which is why
+both steps exist independently.
 
 ### 3. Verify both Secrets before moving on
 
@@ -144,6 +166,133 @@ The HPAs are already applied by step 4, but they do nothing without
 `metrics-server`, which kind doesn't ship by default. See
 [Autoscaling](#autoscaling-horizontalpodautoscaler) below for the
 one-time setup.
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+kubectl patch deployment metrics-server -n kube-system --type='json' \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+kubectl top pods -n rent-a-ride
+```
+
+### 8. Install the Ingress controller (optional — single-entry-point routing)
+
+`41-ingress.yaml` is already applied by step 4, but like the HPAs it does
+nothing until the actual nginx **Ingress controller** is installed — an
+Ingress *resource* just declares routing rules; something has to exist
+in-cluster to read and act on them. See
+[Ingress](#ingress-nginx-ingress-controller) below for the one-time setup.
+
+## Ingress (nginx Ingress controller)
+
+`41-ingress.yaml` routes all traffic through a single entry point instead
+of the two separate NodePorts used so far:
+
+- `http://<host>:31080/` → `frontend` Service (port 8080)
+- `http://<host>:31080/api` → `backend` Service (port 3000)
+
+No `rewrite-target` annotation is used — the backend's own Express routes
+are already mounted under `/api/*` (the same assumption `client/nginx.conf`'s
+own proxy already relies on, see INC-020), so the Ingress passes the full
+path straight through, `/api` included.
+
+This is a genuine second (better) entry point on top of the existing
+`frontend`/`backend` NodePort Services from `21-backend.yaml` /
+`30-frontend.yaml` — those aren't removed and still work directly if you
+need them for debugging.
+
+**Use kind's own ingress-nginx install manifest — NOT the generic "cloud"
+one.** This matters more than it looks: the generic cloud-provider
+manifest creates the controller as `type: LoadBalancer`, which never
+gets an external IP on kind (no cloud load balancer provisioner exists),
+so the obvious-seeming fix is patching its Service to `NodePort`
+afterward. **Don't do this — it looked like it worked in earlier testing
+of this setup, then reliably hung on every actual request from outside
+the cluster, twice, on two different port numbers, even from a
+completely fresh cluster.** Kind's Docker-based nodes make NodePort
+routing to a Service unreliable in ways that don't show up in `kubectl
+get svc`/`get endpoints` — everything reports healthy right up until an
+external client actually tries to use it. `docker exec`-ing into the
+node and curling the same port from inside always worked, which is what
+made this so confusing to diagnose — the break was consistently between
+the host and the node, invisible to every Kubernetes-level check.
+
+kind's own docs address this directly: install the **kind-specific**
+manifest, which runs the controller with a per-pod `hostPort: 80` /
+`hostPort: 443` on its container ports, so the controller binds host
+ports directly — no NodePort, no kube-proxy Service routing involved at
+all for ingress traffic.
+
+**Important — this is not `hostNetwork: true`, and as of the current
+`main`-branch manifest (v1.15.1) it no longer ships a `nodeSelector`
+pinning the controller to the `ingress-ready`-labeled node either.**
+Earlier revisions of both this file and upstream's manifest assumed the
+`ingress-ready: "true"` label on the control-plane node was enough on
+its own — it isn't anymore. `hostPort` only binds on whatever node the
+pod actually lands on, and with no selector, the scheduler is free to
+put it on either worker instead of the control-plane node. `kind-config.yaml`'s
+`31080`/`31443` → `80`/`443` mapping only exists on the **control-plane**
+container, so if the pod lands on a worker, nothing is listening where
+Docker is forwarding to. The symptom is distinctive: `curl` against
+`31080`/`31443` returns `Connection reset by peer` rather than a normal
+refusal, because Docker's userland proxy accepts the connection on the
+host side first and only then discovers there's nothing to forward it
+to on the control-plane container, so it resets the client instead of
+failing to connect in the first place.
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+
+# Required — the upstream manifest no longer pins the controller to the
+# ingress-ready node, so do it explicitly or the pod can land on a
+# worker where none of kind-config.yaml's hostPort mappings apply:
+kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type='json' \
+  -p='[{"op":"add","path":"/spec/template/spec/nodeSelector/ingress-ready","value":"true"}]'
+```
+
+**This also requires `kind-config.yaml`'s control-plane node to already
+have `labels: { ingress-ready: "true" }` set at cluster-creation time**
+(it does, as of this file) — without it, the patch above has nothing to
+schedule onto, and node labels, like `extraPortMappings`, can't be added
+after the cluster already exists. If this cluster predates that label
+being added to `kind-config.yaml`, delete and recreate:
+
+```bash
+kind delete cluster --name rent-a-ride
+kind create cluster --name rent-a-ride --config kind-config.yaml
+# then redo Fresh install steps 2 onward - Secrets and PVCs don't survive
+# cluster deletion, so this really is starting over
+```
+
+Wait for the controller to be ready — this manifest also runs one-shot
+admission-webhook jobs first, so expect a `Completed` job or two
+alongside the controller pod, not just the controller itself. Confirm it
+actually landed on the control-plane node before testing anything else:
+
+```bash
+kubectl get pods -n ingress-nginx -w
+kubectl get pod -n ingress-nginx -l app.kubernetes.io/component=controller -o wide   # NODE column should be the control-plane node
+kubectl get ingress -n rent-a-ride
+```
+
+No Service-patching step needed — `hostPort` means there's no NodePort
+layer to configure at all, once the pod is on the right node. Test both
+routes directly against the mapped host ports:
+
+```bash
+curl -I http://localhost:31080/          # should hit the frontend
+curl http://localhost:31080/api/healthz  # should hit the backend
+```
+
+(Substitute your EC2 public IP for `localhost` if running on EC2 rather
+than locally, and confirm the security group allows inbound TCP `31080`.)
+
+If you see `Connection reset by peer` on either of these, re-check the
+`NODE` column above before anything else — that's almost always this
+same scheduling issue, not a firewall or Service problem. If the pod
+*is* on the control-plane node and you're still seeing resets or hangs,
+that points at something new and worth investigating fresh — but the
+scheduling fix above is the first thing to rule out, since it's what
+every prior failure in this setup traced back to.
 
 ## Pod communication
 
@@ -243,22 +392,27 @@ kubectl get hpa -n rent-a-ride -w
 `hey`/`ab` run against the frontend's NodePort) is the fastest way to
 confirm scaling actually triggers before relying on it.
 
-## Recovering from a placeholder / mismatched-credential Secret
+## Recovering from a placeholder / mismatched-credential / unescaped-password Secret
 
 If a Secret was ever applied with `REPLACE_ME` values (e.g. from before
-this Secrets-out-of-kustomization change), or `mongo-credentials` and
+this Secrets-out-of-kustomization change), `mongo-credentials` and
 `backend-secret`'s `mongo_uri` have drifted out of sync (different
-passwords), the symptom is the backend crash-looping with
-`MongoServerError: Authentication failed` in its logs even though Mongo
-itself is healthy. Fix by patching just the affected key(s) in place —
-no need to delete and recreate the whole Secret:
+passwords), or the generated password contains a URI-special character
+(`@`, `:`, `/`, `%`, `+`) that was embedded in `mongo_uri` unencoded, the
+symptom is the backend crash-looping — either
+`MongoServerError: Authentication failed` (mismatched credentials) or
+`MongoParseError: Password contains unescaped characters` (unencoded
+special character) — in its logs, even though Mongo itself is healthy.
+Fix by patching just the affected key(s) in place — no need to delete and
+recreate the whole Secret:
 
 ```bash
 MONGO_USER=$(kubectl get secret mongo-credentials -n rent-a-ride -o jsonpath='{.data.MONGO_INITDB_ROOT_USERNAME}' | base64 -d)
 MONGO_PASS=$(kubectl get secret mongo-credentials -n rent-a-ride -o jsonpath='{.data.MONGO_INITDB_ROOT_PASSWORD}' | base64 -d)
+MONGO_PASS_ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$MONGO_PASS")
 
 kubectl patch secret backend-secret -n rent-a-ride --type='json' \
-  -p="[{\"op\":\"replace\",\"path\":\"/data/mongo_uri\",\"value\":\"$(echo -n "mongodb://${MONGO_USER}:${MONGO_PASS}@mongo-0.mongo.rent-a-ride.svc.cluster.local:27017/rent-a-ride?authSource=admin" | base64 -w 0)\"}]"
+  -p="[{\"op\":\"replace\",\"path\":\"/data/mongo_uri\",\"value\":\"$(echo -n "mongodb://${MONGO_USER}:${MONGO_PASS_ENCODED}@mongo-0.mongo.rent-a-ride.svc.cluster.local:27017/rent-a-ride?authSource=admin" | base64 -w 0)\"}]"
 
 kubectl -n rent-a-ride rollout restart deployment/backend
 ```
@@ -268,6 +422,12 @@ kubectl -n rent-a-ride rollout restart deployment/backend
 `illegal base64 data at input byte 76` on anything longer than that (a
 full `mongo_uri` always is). Drop `-w 0` on macOS, where `base64` doesn't
 wrap by default and the flag isn't recognized.
+
+`urllib.parse.quote(..., safe='')` matters just as much — running this
+patch with the raw, unencoded password is what causes
+`MongoParseError: Password contains unescaped characters` on the very
+next backend restart even when the credentials themselves are otherwise
+correct.
 
 ## Notes / things to double check
 

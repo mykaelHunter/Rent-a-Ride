@@ -10,3 +10,4 @@ resources:
   - 22-backend-hpa.yaml
   - 30-frontend.yaml
   - 32-frontend-hpa.yaml
+  - 41-ingress.yaml
