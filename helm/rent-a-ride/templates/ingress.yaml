@@ -1,0 +1,33 @@
+{{- if .Values.ingress.enabled }}
+# Requires the ingress-nginx controller to be installed in-cluster first.
+#
+# No rewrite-target annotation is used: the backend's own Express routes
+# are already mounted under /api/* (the same assumption client/nginx.conf's
+# own proxy_pass relies on), so the full incoming path, /api included, is
+# what the backend expects to receive.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.ingress.name }}
+  namespace: {{ include "rent-a-ride.namespace" . }}
+  labels:
+    {{- include "rent-a-ride.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - http:
+        paths:
+          {{- range .Values.ingress.paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ if eq .service "backend" }}{{ $.Values.backend.name }}{{ else }}{{ $.Values.frontend.name }}{{ end }}
+                port:
+                  number: {{ .port }}
+          {{- end }}
+{{- end }}
