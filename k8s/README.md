@@ -11,7 +11,7 @@ Everything else in this file is reference material.
 
 | File | Purpose |
 |---|---|
-| `kind-config.yaml` | 1 control-plane + 2 worker node cluster; control-plane labeled `ingress-ready=true` and maps host ports 30080/30300 (app) + 31080/31443 (ingress, via per-pod `hostPort` binding — see [Ingress](#ingress-nginx-ingress-controller) for why the label alone isn't enough to guarantee the controller lands there) |
+| `kind-config.yaml` | 1 control-plane + 2 worker node cluster; control-plane labeled `ingress-ready=true` and maps host ports 30080/30300 (app) + 31080/31443 (ingress, via hostNetwork) |
 | `00-namespace.yaml` | `rent-a-ride` namespace |
 | `10-mongo-config.yaml` | Mongo non-secret ConfigMap only (`mongo-config`) |
 | `11-mongo-statefulset.yaml` | Mongo 7 StatefulSet with a per-pod PVC (`volumeClaimTemplates`) + headless Service |
@@ -167,13 +167,6 @@ The HPAs are already applied by step 4, but they do nothing without
 [Autoscaling](#autoscaling-horizontalpodautoscaler) below for the
 one-time setup.
 
-```bash
-kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-kubectl patch deployment metrics-server -n kube-system --type='json' \
-  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
-kubectl top pods -n rent-a-ride
-```
-
 ### 8. Install the Ingress controller (optional — single-entry-point routing)
 
 `41-ingress.yaml` is already applied by step 4, but like the HPAs it does
@@ -217,44 +210,40 @@ made this so confusing to diagnose — the break was consistently between
 the host and the node, invisible to every Kubernetes-level check.
 
 kind's own docs address this directly: install the **kind-specific**
-manifest, which runs the controller with a per-pod `hostPort: 80` /
-`hostPort: 443` on its container ports, so the controller binds host
+manifest, which runs the controller with `hostNetwork: true` and a
+`nodeSelector` targeting a labeled node, so the controller binds host
 ports directly — no NodePort, no kube-proxy Service routing involved at
 all for ingress traffic.
 
-**Important — this is not `hostNetwork: true`, and as of the current
-`main`-branch manifest (v1.15.1) it no longer ships a `nodeSelector`
-pinning the controller to the `ingress-ready`-labeled node either.**
-Earlier revisions of both this file and upstream's manifest assumed the
-`ingress-ready: "true"` label on the control-plane node was enough on
-its own — it isn't anymore. `hostPort` only binds on whatever node the
-pod actually lands on, and with no selector, the scheduler is free to
-put it on either worker instead of the control-plane node. `kind-config.yaml`'s
-`31080`/`31443` → `80`/`443` mapping only exists on the **control-plane**
-container, so if the pod lands on a worker, nothing is listening where
-Docker is forwarding to. The symptom is distinctive: `curl` against
-`31080`/`31443` returns `Connection reset by peer` rather than a normal
-refusal, because Docker's userland proxy accepts the connection on the
-host side first and only then discovers there's nothing to forward it
-to on the control-plane container, so it resets the client instead of
-failing to connect in the first place.
-
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+```
 
-# Required — the upstream manifest no longer pins the controller to the
-# ingress-ready node, so do it explicitly or the pod can land on a
-# worker where none of kind-config.yaml's hostPort mappings apply:
+**As of this writing, the upstream manifest above no longer includes the
+`nodeSelector` that pins the controller to the `ingress-ready` node —
+kind's own docs describe it, but the manifest's `main` branch has drifted
+from that. Without it, the controller pod can be scheduled onto any
+node, including a worker with none of `kind-config.yaml`'s host port
+mappings, which produces a very specific and confusing symptom: `curl`
+connects successfully (so it's not a networking dead-end) but gets
+`Recv failure: Connection reset by peer` immediately, because
+`docker-proxy` on the host forwards the connection into the
+control-plane node correctly, but nothing on that specific node is
+listening — the actual controller pod is elsewhere.** Patch the
+`nodeSelector` back in immediately after applying:
+
+```bash
 kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type='json' \
   -p='[{"op":"add","path":"/spec/template/spec/nodeSelector/ingress-ready","value":"true"}]'
 ```
 
-**This also requires `kind-config.yaml`'s control-plane node to already
-have `labels: { ingress-ready: "true" }` set at cluster-creation time**
-(it does, as of this file) — without it, the patch above has nothing to
-schedule onto, and node labels, like `extraPortMappings`, can't be added
-after the cluster already exists. If this cluster predates that label
-being added to `kind-config.yaml`, delete and recreate:
+This requires `kind-config.yaml`'s control-plane node to already have
+`labels: { ingress-ready: "true" }` set at cluster-creation time** (it
+does, as of this file) — the patch's `nodeSelector` won't schedule the
+controller anywhere without it, and node labels, like
+`extraPortMappings`, can't be added after the cluster already exists.
+If this cluster predates that label being added to `kind-config.yaml`,
+delete and recreate:
 
 ```bash
 kind delete cluster --name rent-a-ride
@@ -265,18 +254,21 @@ kind create cluster --name rent-a-ride --config kind-config.yaml
 
 Wait for the controller to be ready — this manifest also runs one-shot
 admission-webhook jobs first, so expect a `Completed` job or two
-alongside the controller pod, not just the controller itself. Confirm it
-actually landed on the control-plane node before testing anything else:
+alongside the controller pod, not just the controller itself:
 
 ```bash
 kubectl get pods -n ingress-nginx -w
-kubectl get pod -n ingress-nginx -l app.kubernetes.io/component=controller -o wide   # NODE column should be the control-plane node
 kubectl get ingress -n rent-a-ride
+
+# confirm the pod actually landed on the control-plane node - if this
+# shows a worker instead, the nodeSelector patch above didn't take
+kubectl get pod -n ingress-nginx -l app.kubernetes.io/component=controller -o wide
 ```
 
-No Service-patching step needed — `hostPort` means there's no NodePort
-layer to configure at all, once the pod is on the right node. Test both
-routes directly against the mapped host ports:
+No Service patching step this time — `hostNetwork: true` means there's
+no NodePort layer to configure at all. Once the controller pod shows
+`1/1 Running` **and is confirmed scheduled on the control-plane node**,
+test both routes directly against the mapped host ports:
 
 ```bash
 curl -I http://localhost:31080/          # should hit the frontend
@@ -286,13 +278,11 @@ curl http://localhost:31080/api/healthz  # should hit the backend
 (Substitute your EC2 public IP for `localhost` if running on EC2 rather
 than locally, and confirm the security group allows inbound TCP `31080`.)
 
-If you see `Connection reset by peer` on either of these, re-check the
-`NODE` column above before anything else — that's almost always this
-same scheduling issue, not a firewall or Service problem. If the pod
-*is* on the control-plane node and you're still seeing resets or hangs,
-that points at something new and worth investigating fresh — but the
-scheduling fix above is the first thing to rule out, since it's what
-every prior failure in this setup traced back to.
+If these still hang the way the NodePort-patched approach did, that
+would point at something new and worth investigating fresh — but this
+approach removes the entire layer (kube-proxy NodePort routing through
+Docker's NAT) that every previous failure traced back to, so it's the
+right next thing to try before going deeper into host networking again.
 
 ## Pod communication
 
