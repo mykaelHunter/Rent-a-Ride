@@ -1,0 +1,283 @@
+# Default values for the rent-a-ride chart.
+# Every value that was previously hardcoded in k8s/*.yaml lives here.
+#
+# Secrets are deliberately NOT created by this chart by default
+# (mongo.secret.create / backend.secret.create are both false out of the
+# box) - the original k8s/ manifests kept mongo-credentials and
+# backend-secret out of kustomization.yaml on purpose (see
+# k8s/secret-templates/*.example and INC history in docs/incident-log.md:
+# checked-in REPLACE_ME placeholders were once applied to a live cluster
+# by accident). The safe default is to create those Secrets yourself
+# (kubectl create secret ... or --set on `helm install`) and just point
+# this chart at their names via mongo.secret.name / backend.secret.name.
+
+namespace:
+  # Whether this chart manages its own Namespace object (mirrors the
+  # original k8s/00-namespace.yaml). Set to false to install into a
+  # namespace you already created (e.g. via `helm install -n foo
+  # --create-namespace`).
+  create: true
+  name: rent-a-ride
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# MongoDB (StatefulSet)
+# ---------------------------------------------------------------------------
+mongo:
+  name: mongo
+  image:
+    repository: mongo
+    tag: "7"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 27017
+
+  config:
+    database: "rent-a-ride"
+    # Left blank by default so the template can derive the standard
+    # per-pod StatefulSet DNS name (mongo-0.mongo.<namespace>.svc.cluster.local)
+    # from mongo.name / mongo.replicas / the release namespace. Set this
+    # explicitly to override.
+    host: ""
+    port: "27017"
+
+  secret:
+    # If false (default), the chart assumes a Secret named `name` already
+    # exists in-cluster with keys MONGO_INITDB_ROOT_USERNAME /
+    # MONGO_INITDB_ROOT_PASSWORD.
+    create: false
+    name: mongo-credentials
+    # Only used when create: true. Do not commit real credentials here -
+    # pass with --set mongo.secret.rootUsername=... --set-string
+    # mongo.secret.rootPassword=... or a separate untracked values file.
+    rootUsername: ""
+    rootPassword: ""
+
+  probes:
+    readiness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 6
+    liveness:
+      initialDelaySeconds: 45
+      periodSeconds: 20
+      timeoutSeconds: 10
+      failureThreshold: 3
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  persistence:
+    size: 1Gi
+    accessModes:
+      - ReadWriteOnce
+    # Empty = use the cluster's default StorageClass (e.g. kind's
+    # rancher local-path-provisioner "standard" class).
+    storageClassName: ""
+
+# ---------------------------------------------------------------------------
+# Backend (Deployment + Service + external NodePort Service + HPA)
+# ---------------------------------------------------------------------------
+backend:
+  name: backend
+  image:
+    repository: mykaelhunter/rent-a-ride-backend
+    tag: latest
+    pullPolicy: Always
+  replicas: 2
+  containerPort: 3000
+
+  config:
+    port: "3000"
+    logLevel: "info"
+    # Replace with the real frontend origin (EC2 public IP / domain) before
+    # deploying, e.g. "http://203.0.113.10:30080" or "https://app.example.com".
+    allowedOrigins: "http://<EC2-PUBLIC-IP>:30080"
+
+  secret:
+    # If false (default), the chart assumes a Secret named `name` already
+    # exists in-cluster with mongo_uri + the app's third-party credentials
+    # (see k8s/secret-templates/backend-secret.yaml.example for the full key list).
+    create: false
+    name: backend-secret
+    # Only used when create: true. Do not commit real values here.
+    data: {}
+    #   mongo_uri: "mongodb://user:pass@mongo-0.mongo.rent-a-ride.svc.cluster.local:27017/rent-a-ride?authSource=admin"
+    #   ACCESS_TOKEN: ""
+    #   REFRESH_TOKEN: ""
+    #   CLOUD_NAME: ""
+    #   API_KEY: ""
+    #   API_SECRET: ""
+    #   EMAIL_HOST: ""
+    #   EMAIL_PASSWORD: ""
+    #   RAZORPAY_KEY_ID: ""
+    #   RAZORPAY_SECRET: ""
+
+  probes:
+    readiness:
+      path: /healthz
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 5
+    liveness:
+      path: /healthz
+      initialDelaySeconds: 20
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "1000m"
+      memory: "512Mi"
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+
+  service:
+    port: 3000
+    targetPort: 3000
+
+  externalService:
+    # NodePort for direct/debug access - mirrors k8s/21-backend.yaml's
+    # backend-external Service. The frontend does not use this; it talks
+    # to the ClusterIP Service above.
+    enabled: true
+    type: NodePort
+    port: 3000
+    targetPort: 3000
+    nodePort: 30300
+
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    cpuUtilization: 70
+    memoryUtilization: 80
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 30
+          - type: Pods
+            value: 2
+            periodSeconds: 30
+        selectPolicy: Max
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 60
+        selectPolicy: Min
+
+# ---------------------------------------------------------------------------
+# Frontend (Deployment + NodePort Service + HPA)
+# ---------------------------------------------------------------------------
+frontend:
+  name: frontend
+  image:
+    repository: mykaelhunter/rent-a-ride-client
+    tag: latest
+    pullPolicy: Always
+  replicas: 2
+  containerPort: 8080
+
+  probes:
+    readiness:
+      path: /
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    liveness:
+      path: /
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "500m"
+      memory: "128Mi"
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+
+  service:
+    # NodePort - reachable at http://<EC2-PUBLIC-IP>:30080 (mapped through
+    # kind-config.yaml's extraPortMappings on the control-plane node).
+    type: NodePort
+    port: 8080
+    targetPort: 8080
+    nodePort: 30080
+
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    cpuUtilization: 70
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 30
+        selectPolicy: Max
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 60
+        selectPolicy: Min
+
+# ---------------------------------------------------------------------------
+# Ingress (requires the ingress-nginx controller in-cluster)
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  name: rent-a-ride-ingress
+  annotations:
+    # No TLS/cert configured for the kind/EC2 setup this chart was
+    # converted from - force plain HTTP so ingress-nginx doesn't
+    # 308-redirect every request to https before a certificate exists.
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+  # More specific path first for readability - ingress-nginx matches by
+  # path specificity regardless of order, but /api is listed first here
+  # to avoid ambiguity for anyone reading the file top to bottom.
+  paths:
+    - path: /api
+      pathType: Prefix
+      service: backend
+      port: 3000
+    - path: /
+      pathType: Prefix
+      service: frontend
+      port: 8080

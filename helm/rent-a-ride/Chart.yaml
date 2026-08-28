@@ -1,0 +1,20 @@
+apiVersion: v2
+name: rent-a-ride
+description: >
+  Helm chart for the Rent-a-Ride MERN car rental app - MongoDB (StatefulSet),
+  Node/Express backend, and Vite/React (nginx) frontend, with HPAs and an
+  optional nginx Ingress. Converted from the project's k8s/ manifests.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - mern
+  - mongodb
+  - nodejs
+  - nginx
+  - car-rental
+home: https://github.com/mykaelHunter/Rent-a-Ride
+sources:
+  - https://github.com/mykaelHunter/Rent-a-Ride
+maintainers:
+  - name: mykaelHunter

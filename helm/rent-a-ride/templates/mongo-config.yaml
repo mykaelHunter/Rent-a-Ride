@@ -1,0 +1,30 @@
+# Non-secret Mongo settings. mongo-credentials (the Secret with the root
+# username/password) is NOT created by this chart unless mongo.secret.create
+# is explicitly set to true - see values.yaml for why.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongo-config
+  namespace: {{ include "rent-a-ride.namespace" . }}
+  labels:
+    {{- include "rent-a-ride.labels" . | nindent 4 }}
+    app: {{ .Values.mongo.name }}
+data:
+  MONGO_INITDB_DATABASE: {{ .Values.mongo.config.database | quote }}
+  MONGO_HOST: {{ include "rent-a-ride.mongoHost" . | quote }}
+  MONGO_PORT: {{ .Values.mongo.config.port | quote }}
+---
+{{- if .Values.mongo.secret.create }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.mongo.secret.name }}
+  namespace: {{ include "rent-a-ride.namespace" . }}
+  labels:
+    {{- include "rent-a-ride.labels" . | nindent 4 }}
+    app: {{ .Values.mongo.name }}
+type: Opaque
+stringData:
+  MONGO_INITDB_ROOT_USERNAME: {{ .Values.mongo.secret.rootUsername | quote }}
+  MONGO_INITDB_ROOT_PASSWORD: {{ .Values.mongo.secret.rootPassword | quote }}
+{{- end }}
