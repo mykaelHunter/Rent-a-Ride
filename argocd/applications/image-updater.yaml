@@ -1,0 +1,16 @@
+# The current "stable" argocd-image-updater release is a CRD-driven
+# controller: it doesn't act on any Application just because it has
+# argocd-image-updater.argoproj.io/* annotations - it only manages
+# Applications matched by an ImageUpdater CR. useAnnotations: true tells
+# it to read the per-image configuration from the matched Application's
+# own annotations (see applications/rent-a-ride.yaml) instead of
+# duplicating that configuration here in the CR's spec.images.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: rent-a-ride
+  namespace: argocd
+spec:
+  applicationRefs:
+    - namePattern: rent-a-ride
+      useAnnotations: true
