@@ -57,7 +57,7 @@ pipeline {
                     sh """
                         docker build \
                             -f client/Dockerfile \
-                            --build-arg VITE_PRODUCTION_BACKEND_URL=https://api.rent-a-ride.example.com \
+                            --build-arg VITE_PRODUCTION_BACKEND_URL= \
                             --build-arg VITE_FIREBASE_API_KEY=${VITE_FIREBASE_API_KEY} \
                             --build-arg VITE_RAZORPAY_KEY_ID=${VITE_RAZORPAY_KEY_ID} \
                             -t ${CLIENT_IMAGE}:${IMAGE_TAG} \
