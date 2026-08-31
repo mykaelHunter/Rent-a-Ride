@@ -57,7 +57,7 @@ pipeline {
                     sh """
                         docker build \
                             -f client/Dockerfile \
-                            --build-arg VITE_PRODUCTION_BACKEND_URL=https://api.rent-a-ride.example.com \
+                            --build-arg VITE_PRODUCTION_BACKEND_URL= \
                             --build-arg VITE_FIREBASE_API_KEY=${VITE_FIREBASE_API_KEY} \
                             --build-arg VITE_RAZORPAY_KEY_ID=${VITE_RAZORPAY_KEY_ID} \
                             -t ${CLIENT_IMAGE}:${IMAGE_TAG} \
@@ -90,12 +90,18 @@ pipeline {
                 // Drop the just-built local tags first so the following pull
                 // is a real round-trip to Docker Hub, not a local no-op —
                 // this is what actually gets deployed, matching what any
-                // other machine pulling these tags would get.
+                // other machine pulling these tags would get. Pulls :latest
+                // specifically (not the build-number tag) so this stage and
+                // the Deploy stage below actually use the tag this pipeline
+                // just pushed - ArgoCD Image Updater elsewhere in this repo
+                // also tracks these images by :latest's digest, so this
+                // keeps the Jenkins/docker-compose deploy path and the
+                // Argo CD/k8s path pointed at the same tag.
                 sh """
                     docker rmi -f ${BACKEND_IMAGE}:${IMAGE_TAG} ${BACKEND_IMAGE}:latest \
                                   ${CLIENT_IMAGE}:${IMAGE_TAG} ${CLIENT_IMAGE}:latest || true
-                    docker pull ${BACKEND_IMAGE}:${IMAGE_TAG}
-                    docker pull ${CLIENT_IMAGE}:${IMAGE_TAG}
+                    docker pull ${BACKEND_IMAGE}:latest
+                    docker pull ${CLIENT_IMAGE}:latest
                 """
             }
         }
@@ -121,7 +127,7 @@ pipeline {
                 sh """
                     BACKEND_IMAGE=${BACKEND_IMAGE} \
                     CLIENT_IMAGE=${CLIENT_IMAGE} \
-                    IMAGE_TAG=${IMAGE_TAG} \
+                    IMAGE_TAG=latest \
                     docker compose -f docker-compose.yml up -d
                 """
             }
@@ -155,7 +161,7 @@ pipeline {
             sh 'rm -f backend/.env || true'
         }
         success {
-            echo "Deployed ${BACKEND_IMAGE}:${IMAGE_TAG} and ${CLIENT_IMAGE}:${IMAGE_TAG} via docker compose."
+            echo "Built and pushed ${BACKEND_IMAGE}:${IMAGE_TAG} / :latest and ${CLIENT_IMAGE}:${IMAGE_TAG} / :latest; deployed :latest via docker compose."
         }
         failure {
             echo "Build failed — check which stage stopped the pipeline above."

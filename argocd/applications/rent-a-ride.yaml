@@ -1,0 +1,65 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rent-a-ride
+  namespace: argocd
+  annotations:
+    # Two images to track, aliased "backend" and "frontend" so the
+    # per-image annotations below can refer to them by short name.
+    argocd-image-updater.argoproj.io/image-list: "backend=mykaelhunter/rent-a-ride-backend:latest,frontend=mykaelhunter/rent-a-ride-client:latest"
+
+    # Both images are always pushed as :latest by the Jenkins pipeline
+    # (see the remediation report's Recommended Next Steps for the case
+    # for moving off :latest eventually) - "digest" is the update
+    # strategy that actually makes sense for a static tag, since it
+    # tracks when :latest's underlying content changes rather than
+    # comparing tag strings that never differ.
+    argocd-image-updater.argoproj.io/backend.update-strategy: digest
+    argocd-image-updater.argoproj.io/frontend.update-strategy: digest
+
+    # Write updates back into helm/rent-a-ride/values.yaml itself,
+    # as a git commit, rather than only as an Argo CD-side parameter
+    # override - so `helm template`/`git log` both show the real
+    # deployed image on their own, with no Argo CD-specific state
+    # required to reconstruct it.
+    argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/git-creds
+    argocd-image-updater.argoproj.io/write-back-target: helmvalues:values.yaml
+    argocd-image-updater.argoproj.io/git-branch: feature/hunter
+
+    # Map each alias to the exact values.yaml keys the Helm chart
+    # already reads (see helm/rent-a-ride/values.yaml and the
+    # backend-deployment.yaml / frontend-deployment.yaml templates).
+    argocd-image-updater.argoproj.io/backend.helm.image-name: backend.image.repository
+    argocd-image-updater.argoproj.io/backend.helm.image-tag: backend.image.tag
+    argocd-image-updater.argoproj.io/frontend.helm.image-name: frontend.image.repository
+    argocd-image-updater.argoproj.io/frontend.helm.image-tag: frontend.image.tag
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/mykaelHunter/Rent-a-Ride.git
+    targetRevision: feature/hunter
+    path: helm/rent-a-ride
+    helm:
+      valueFiles:
+        - values.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Not the Application's sync namespace for every resource - the
+    # chart's own namespace.yaml template (namespace.create: true) is
+    # what actually creates/owns the rent-a-ride Namespace, same as it
+    # did under plain `helm install`. This just tells Argo CD where
+    # namespaced resources without an explicit namespace should land.
+    namespace: rent-a-ride
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # False on purpose - see the destination.namespace comment above.
+      # The chart already creates its own Namespace resource; letting
+      # Argo CD create one too risks Argo CD and the chart disagreeing
+      # about who owns it.
+      - CreateNamespace=false

@@ -1,0 +1,24 @@
+# Overrides to the argocd-image-updater ConfigMap created by the install
+# manifest. kubectl apply -n argocd -f this file *after* the install
+# manifest, not instead of it - it patches the same ConfigMap by name.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-image-updater-config
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-image-updater
+    app.kubernetes.io/part-of: argocd-image-updater
+data:
+  log.level: info
+
+  # Identity used for the git commits Image Updater makes when it writes
+  # a new image tag/digest back into helm/rent-a-ride/values.yaml.
+  git.commit-message-template: |
+    build: automatic update of {{ .AppName }}
+
+    {{ range .AppChanges -}}
+    updates image {{ .Image }} tag '{{ .OldTag }}' to '{{ .NewTag }}'
+    {{ end -}}
+  git.user: "argocd-image-updater"
+  git.email: "argocd-image-updater@rent-a-ride.local"
