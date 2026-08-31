@@ -90,7 +90,7 @@ backend:
   name: backend
   image:
     repository: mykaelhunter/rent-a-ride-backend
-    tag: latest@sha256:f6b66376ff06d6c45ccfb5bc4677af6432aebe115ff5bff428d6ee7ce56ad29f
+    tag: latest@sha256:db64ea4c956315f129f4297b3cd93d3b66a95731f5948f270c9808adc9d28815
     pullPolicy: Always
   replicas: 2
   containerPort: 3000
@@ -195,7 +195,7 @@ frontend:
   name: frontend
   image:
     repository: mykaelhunter/rent-a-ride-client
-    tag: latest@sha256:da9bb1bdeb12c841edc01a24af16475197c508341b23cfc94d2ffbf9d765a381
+    tag: latest@sha256:af9997e45cb50d0d5b032b39787e2b682197b634fc1bee103d2ae8ddc8d04c19
     pullPolicy: Always
   replicas: 2
   containerPort: 8080
