@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rent-a-ride
+resources:
+  - 00-namespace.yaml
+  - 10-mongo-config.yaml
+  - 11-mongo-statefulset.yaml
+  - 20-backend-config.yaml
+  - 21-backend.yaml
+  - 22-backend-hpa.yaml
+  - 30-frontend.yaml
+  - 32-frontend-hpa.yaml
+  - 41-ingress.yaml

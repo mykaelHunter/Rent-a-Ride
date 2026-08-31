@@ -1,7 +1,7 @@
 import User from "../../models/userModel.js";
 import { errorHandler } from "../../utils/error.js";
 import bcryptjs from "bcryptjs";
-
+import logger from "../../utils/logger.js";
 
 //update user
 
@@ -51,7 +51,6 @@ export const deleteUser = async (req, res, next) => {
   }
 };
 
-
 //signOut 
 
 export const signOut = async(req,res,next)=> {
@@ -60,7 +59,7 @@ export const signOut = async(req,res,next)=> {
     res.status(200).json({message:"signedOut successfully"})
   }
   catch(error){
-   console.log(error)
+   logger.error({ err: error });
    next(errorHandler(500,'error in signout controller'))
   }
 

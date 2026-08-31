@@ -4,6 +4,7 @@ import vehicle from "../../models/vehicleModel.js";
 import { uploader } from "../../utils/cloudinaryConfig.js";
 import { base64Converter } from "../../utils/multer.js";
 import Vehicle from "../../models/vehicleModel.js";
+import logger from "../../utils/logger.js";
 
 // vendor add vehicle
 export const vendorAddVehicle = async (req, res, next) => {
@@ -53,9 +54,7 @@ export const vendorAddVehicle = async (req, res, next) => {
               });
               uploadedImages.push(result.secure_url);
             } catch (error) {
-              console.log(error, {
-                message: "error while uploading to cloudinary",
-              });
+              logger.error({ err: error }, "error while uploading to cloudinary");
             }
           })
         );
@@ -97,7 +96,7 @@ export const vendorAddVehicle = async (req, res, next) => {
             return next(errorHandler(409, "product already exists"));
           }
 
-          console.log(error);
+          logger.error({ err: error });
           next(errorHandler(500, "product not uploaded"));
         }
       } catch (error) {
@@ -105,7 +104,7 @@ export const vendorAddVehicle = async (req, res, next) => {
       }
     }
   } catch (error) {
-    console.log(error)
+    logger.error({ err: error });
     next(errorHandler(400, "vehicle failed to add "));
   }
 };
@@ -194,7 +193,7 @@ export const vendorEditVehicles = async (req, res, next) => {
       }
     }
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "something went wrong"));
   }
 };
@@ -214,7 +213,7 @@ export const vendorDeleteVehicles = async (req, res, next) => {
     }
     res.status(200).json({ message: "deleted successfully" });
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "error while vendorDeleteVehilces"));
   }
 };
@@ -244,7 +243,7 @@ export const showVendorVehicles = async (req, res, next) => {
 
     res.status(200).json(vendorsVehicles);
   } catch (error) {
-    console.error(error);
+    logger.error({ err: error });
     next(errorHandler(500, "Error in showVendorVehicles"));
   }
 };

@@ -1,5 +1,6 @@
 import Booking from "../models/BookingModel.js";
 import Vehicle from "../models/vehicleModel.js";
+import logger from "../utils/logger.js";
 
 //returning vehicles that are not booked in selected Date
 export async function availableAtDate(pickupDate, dropOffDate) {
@@ -63,7 +64,7 @@ export async function availableAtDate(pickupDate, dropOffDate) {
 
     return vehiclesWithoutBookings || [];
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     throw error;
   }
 }

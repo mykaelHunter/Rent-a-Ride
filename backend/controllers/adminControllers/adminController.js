@@ -1,6 +1,8 @@
+// Confirms the caller is an admin. Run this after verifyToken + requireAdmin
+// (see routes/adminRoute.js) so req.userDoc is already the loaded, checked user.
 export const adminAuth = async (req,res,next)=> {
     try{
-        if(req.user.isAdmin){
+        if(req.userDoc?.isAdmin){
             res.status(200).json({message:"admin loged in successfully"})
         }
         else{

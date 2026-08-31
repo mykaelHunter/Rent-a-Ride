@@ -1,0 +1,17 @@
+# Non-secret backend config. backend-secret (mongo_uri + app credentials)
+# is intentionally NOT defined in this file, or anywhere in
+# kustomization.yaml's applied resources - see
+# secret-templates/backend-secret.yaml.example and the README's
+# "Fresh install" section for why, and the one-time command that creates
+# it directly instead.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: rent-a-ride
+data:
+  PORT: "3000"
+  LOG_LEVEL: "info"
+  # Frontend is reachable at the EC2 host's public IP on NodePort 30080 -
+  # replace <EC2-PUBLIC-IP> before applying.
+  ALLOWED_ORIGINS: "http://<EC2-PUBLIC-IP>:30080"
