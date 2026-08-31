@@ -1,5 +1,6 @@
 import vehicle from "../../models/vehicleModel.js";
 import { errorHandler } from "../../utils/error.js";
+import logger from "../../utils/logger.js";
 
 //show all vehicles to user
 export const listAllVehicles = async (req, res, next) => {
@@ -11,7 +12,7 @@ export const listAllVehicles = async (req, res, next) => {
     }
     res.status(200).json(vehicles);
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "something went wrong"));
   }
 };
@@ -31,7 +32,7 @@ export const showVehicleDetails = async (req, res, next) => {
 
     res.status(200).json(vehicleDetail);
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "something went wrong"));
   }
 };
@@ -45,7 +46,7 @@ export const checkAvailability = async (req, res, next) => {
     const { pickupDate, dropOffDate, vehicleId } = req.body;
 
     if (!pickupDate || !dropOffDate || !vehicleId) {
-      console.log("pickup , dropffdate and vehicleId is required");
+
       next(errorHandler(409, "pickup , dropffdate and vehicleId is required"));
     }
 
@@ -56,7 +57,6 @@ export const checkAvailability = async (req, res, next) => {
 
     const sixHoursLater = new Date(dropOffDate);
     sixHoursLater.setTime(sixHoursLater.getTime() + 6 * 60 * 60 * 1000);
-    console.log(sixHoursLater)
 
     //checking data base  find overlapping pickup and dropoffDates
     const existingBookings = await Booking.find({
@@ -90,7 +90,7 @@ export const checkAvailability = async (req, res, next) => {
       .status(200)
       .json({ message: "Vehicle is available for booking" });
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "error in checkAvailability"));
   }
 };

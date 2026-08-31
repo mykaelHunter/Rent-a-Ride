@@ -1,0 +1,29 @@
+# Non-secret backend config. backend-secret (mongo_uri + app credentials)
+# is NOT created by this chart unless backend.secret.create is explicitly
+# set to true - see values.yaml for why.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: {{ include "rent-a-ride.namespace" . }}
+  labels:
+    {{- include "rent-a-ride.labels" . | nindent 4 }}
+    app: {{ .Values.backend.name }}
+data:
+  PORT: {{ .Values.backend.config.port | quote }}
+  LOG_LEVEL: {{ .Values.backend.config.logLevel | quote }}
+  ALLOWED_ORIGINS: {{ .Values.backend.config.allowedOrigins | quote }}
+---
+{{- if .Values.backend.secret.create }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.backend.secret.name }}
+  namespace: {{ include "rent-a-ride.namespace" . }}
+  labels:
+    {{- include "rent-a-ride.labels" . | nindent 4 }}
+    app: {{ .Values.backend.name }}
+type: Opaque
+stringData:
+  {{- toYaml .Values.backend.secret.data | nindent 2 }}
+{{- end }}

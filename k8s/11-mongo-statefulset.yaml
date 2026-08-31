@@ -1,0 +1,107 @@
+# Headless Service (clusterIP: None) - required for a StatefulSet, gives
+# each pod a stable DNS identity: mongo-0.mongo.rent-a-ride.svc.cluster.local
+# This is what MONGO_HOST in 10-mongo-config.yaml points at, and what the
+# backend's mongo_uri (20-backend-config.yaml) resolves through.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: rent-a-ride
+  labels:
+    app: mongo
+spec:
+  clusterIP: None
+  selector:
+    app: mongo
+  ports:
+    - port: 27017
+      targetPort: 27017
+      name: mongo
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: rent-a-ride
+  labels:
+    app: mongo
+spec:
+  serviceName: mongo          # must match the headless Service above
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongo
+  template:
+    metadata:
+      labels:
+        app: mongo
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:7
+          ports:
+            - containerPort: 27017
+              name: mongo
+          envFrom:
+            - configMapRef:
+                name: mongo-config
+            - secretRef:
+                name: mongo-credentials
+          volumeMounts:
+            - name: mongo-data
+              mountPath: /data/db
+          readinessProbe:
+            exec:
+              # Auth against the root user created from the Secret above -
+              # a plain ping without credentials would report "ready" even
+              # if auth is actually broken.
+              #
+              # Wrapped in `sh -c` using real shell $VAR expansion, NOT
+              # Kubernetes' $(VAR_NAME) syntax - that substitution only
+              # applies to a container's command/args fields, never to
+              # probe exec commands, which run as a literal argv array
+              # with no shell and no variable expansion. Using $(VAR) here
+              # previously sent the literal string "$(MONGO_INITDB_ROOT_USERNAME)"
+              # to mongosh as the actual username, which always failed
+              # auth. mongo:7 has a shell (unlike the backend's distroless
+              # image), so this works here.
+              command:
+                - sh
+                - -c
+                - mongosh --quiet --eval "db.adminCommand('ping')" -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - mongosh --quiet --eval "db.adminCommand('ping')" -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin
+            initialDelaySeconds: 45
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+  # volumeClaimTemplates - unlike a Deployment's single shared PVC, each
+  # StatefulSet pod gets its own PVC, provisioned automatically and named
+  # mongo-data-mongo-0, mongo-data-mongo-1, etc. Only one replica is used
+  # here, but this is what makes the storage genuinely tied to the pod's
+  # stable identity rather than to the ReplicaSet as a whole.
+  volumeClaimTemplates:
+    - metadata:
+        name: mongo-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # kind ships the "standard" storageClass (rancher local-path-provisioner)
+        # by default, so no storageClassName override is needed here.
+        resources:
+          requests:
+            storage: 1Gi

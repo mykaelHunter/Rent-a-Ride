@@ -1,4 +1,5 @@
 import Booking from '../../models/BookingModel.js'
+import logger from "../../utils/logger.js";
 
 export const vendorBookings = async (req, res, next) => {
     try {
@@ -27,7 +28,7 @@ export const vendorBookings = async (req, res, next) => {
     
         res.status(200).json(bookings);
       } catch (error) {
-        console.log(error);
+        logger.error({ err: error });
         next(errorHandler(500, "error in allBookings"));
       }
   };

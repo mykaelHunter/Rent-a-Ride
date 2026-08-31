@@ -1,0 +1,15 @@
+# Non-secret Mongo settings. mongo-credentials (the Secret with the root
+# username/password) is intentionally NOT defined in this file, or
+# anywhere in kustomization.yaml's applied resources - see
+# secret-templates/mongo-credentials.yaml.example and the README's
+# "Fresh install" section for why, and the one-time command that creates
+# it directly instead.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongo-config
+  namespace: rent-a-ride
+data:
+  MONGO_INITDB_DATABASE: "rent-a-ride"
+  MONGO_HOST: "mongo-0.mongo.rent-a-ride.svc.cluster.local"
+  MONGO_PORT: "27017"

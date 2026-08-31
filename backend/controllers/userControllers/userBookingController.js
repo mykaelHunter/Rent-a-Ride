@@ -5,6 +5,7 @@ import Razorpay from "razorpay";
 import { availableAtDate } from "../../services/checkAvailableVehicle.js";
 import Vehicle from "../../models/vehicleModel.js";
 import nodemailer from "nodemailer";
+import logger from "../../utils/logger.js";
 
 export const BookCar = async (req, res, next) => {
   try {
@@ -39,7 +40,7 @@ export const BookCar = async (req, res, next) => {
       status: "booked",
     });
     if (!book) {
-      console.log("not booked");
+
       return;
     }
 
@@ -49,7 +50,7 @@ export const BookCar = async (req, res, next) => {
       booked,
     });
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "error while booking car"));
   }
 };
@@ -60,7 +61,6 @@ export const razorpayOrder = async (req, res, next) => {
     const { totalPrice, dropoff_location, pickup_district, pickup_location } =
       req.body;
 
-    console.log(totalPrice)
     if (
       !totalPrice ||
       !dropoff_location ||
@@ -85,7 +85,7 @@ export const razorpayOrder = async (req, res, next) => {
     if (!order) return res.status(500).send("Some error occured");
     res.status(200).json(order);
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "error occured in razorpayorder"));
   }
 };
@@ -136,8 +136,7 @@ export const getVehiclesWithoutBooking = async (req, res, next) => {
 
     // If there is no next middleware after this one, send the response
     if (!req.route || !req.route.stack || req.route.stack.length === 1) {
-      console.log("hello");
-      console.log({ success: "true", data: availableVehicles });
+
       return res.status(200).json({
         success: true,
         data: availableVehicles,
@@ -148,7 +147,7 @@ export const getVehiclesWithoutBooking = async (req, res, next) => {
     res.locals.actionResult = [availableVehicles, model];
     next();
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     return next(
       errorHandler(500, "An error occurred while fetching available vehicles.")
     );
@@ -201,7 +200,7 @@ export const showOneofkind = async (req, res, next) => {
 
     res.status(200).json(singleVehicleofModel);
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "error in showOneofkind"));
   }
 };
@@ -269,7 +268,7 @@ export const filterVehicles = async (req, res, next) => {
       },
     });
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "internal server error in fiilterVehicles"));
   }
 };
@@ -310,7 +309,7 @@ export const findBookingsOfUser = async (req, res, next) => {
 
     res.status(200).json(bookings);
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "internal error in findBookingOfUser"));
   }
 };
@@ -319,7 +318,7 @@ export const findBookingsOfUser = async (req, res, next) => {
 export const latestbookings = async (req, res, next) => {
   try {
     const { user_id } = req.body;
-    console.log(user_id);
+
     const convertedUserId = new mongoose.Types.ObjectId(user_id);
 
     const bookings = await Booking.aggregate([
@@ -369,7 +368,7 @@ export const latestbookings = async (req, res, next) => {
 
     res.status(200).json(bookings);
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "internal server error in latestbookings"));
   }
 };
@@ -377,10 +376,8 @@ export const latestbookings = async (req, res, next) => {
 //send booking details to user email
 export const sendBookingDetailsEamil = (req, res, next) => {
   try {
-    console.log("hello");
+
     const { toEmail, data } = req.body;
-    console.log("hi");
-    console.log(req.body);
 
     var transporter = nodemailer.createTransport({
       service: "gmail",
@@ -441,14 +438,14 @@ export const sendBookingDetailsEamil = (req, res, next) => {
 
     transporter.sendMail(mailOptions, function (error, info) {
       if (error) {
-        console.log(error);
+        logger.error({ err: error });
       } else {
-        console.log("Email sent: " + info.response);
+        logger.info({ response: info.response }, "Email sent");
         res.status(200).json("Email sent successfully");
       }
     });
   } catch (error) {
-    console.log(error);
+    logger.error({ err: error });
     next(errorHandler(500, "internal server error in sendBookingDetailsEmail"));
   }
 };

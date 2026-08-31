@@ -1,0 +1,33 @@
+Rent-a-Ride has been deployed into namespace "{{ include "rent-a-ride.namespace" . }}".
+
+{{- if not .Values.mongo.secret.create }}
+
+NOTE: mongo.secret.create is false (default). Make sure a Secret named
+"{{ .Values.mongo.secret.name }}" already exists in that namespace with
+MONGO_INITDB_ROOT_USERNAME / MONGO_INITDB_ROOT_PASSWORD, e.g.:
+
+  kubectl create secret generic {{ .Values.mongo.secret.name }} \
+    -n {{ include "rent-a-ride.namespace" . }} \
+    --from-literal=MONGO_INITDB_ROOT_USERNAME=<user> \
+    --from-literal=MONGO_INITDB_ROOT_PASSWORD=<password>
+{{- end }}
+
+{{- if not .Values.backend.secret.create }}
+
+NOTE: backend.secret.create is false (default). Make sure a Secret named
+"{{ .Values.backend.secret.name }}" already exists in that namespace with
+mongo_uri and the app's third-party credentials (see
+k8s/secret-templates/backend-secret.yaml.example for the full key list).
+{{- end }}
+
+{{- if eq .Values.frontend.service.type "NodePort" }}
+
+Frontend is reachable via NodePort {{ .Values.frontend.service.nodePort }}
+on any cluster node's IP.
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+
+Ingress "{{ .Values.ingress.name }}" is enabled (class: {{ .Values.ingress.className }}).
+Make sure the ingress-nginx controller is installed in-cluster.
+{{- end }}

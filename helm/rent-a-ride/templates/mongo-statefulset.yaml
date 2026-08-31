@@ -1,0 +1,92 @@
+# Headless Service (clusterIP: None) - required for the StatefulSet, gives
+# each pod a stable DNS identity: <mongo.name>-0.<mongo.name>.<namespace>.svc.cluster.local
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.mongo.name }}
+  namespace: {{ include "rent-a-ride.namespace" . }}
+  labels:
+    {{- include "rent-a-ride.labels" . | nindent 4 }}
+    app: {{ .Values.mongo.name }}
+spec:
+  clusterIP: None
+  selector:
+    app: {{ .Values.mongo.name }}
+  ports:
+    - port: {{ .Values.mongo.port }}
+      targetPort: {{ .Values.mongo.port }}
+      name: mongo
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.mongo.name }}
+  namespace: {{ include "rent-a-ride.namespace" . }}
+  labels:
+    {{- include "rent-a-ride.labels" . | nindent 4 }}
+    app: {{ .Values.mongo.name }}
+spec:
+  serviceName: {{ .Values.mongo.name }}
+  replicas: {{ .Values.mongo.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.mongo.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.mongo.name }}
+    spec:
+      containers:
+        - name: {{ .Values.mongo.name }}
+          image: "{{ .Values.mongo.image.repository }}:{{ .Values.mongo.image.tag }}"
+          imagePullPolicy: {{ .Values.mongo.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.mongo.port }}
+              name: mongo
+          envFrom:
+            - configMapRef:
+                name: mongo-config
+            - secretRef:
+                name: {{ .Values.mongo.secret.name }}
+          volumeMounts:
+            - name: mongo-data
+              mountPath: /data/db
+          readinessProbe:
+            exec:
+              # Auth against the root user created from the Secret above -
+              # a plain ping without credentials would report "ready" even
+              # if auth is actually broken. Uses real shell $VAR expansion
+              # (sh -c), not Kubernetes' $(VAR_NAME) syntax, which only
+              # applies to command/args and never to probe exec argv.
+              command:
+                - sh
+                - -c
+                - mongosh --quiet --eval "db.adminCommand('ping')" -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin
+            initialDelaySeconds: {{ .Values.mongo.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.mongo.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.mongo.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.mongo.probes.readiness.failureThreshold }}
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - mongosh --quiet --eval "db.adminCommand('ping')" -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin
+            initialDelaySeconds: {{ .Values.mongo.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.mongo.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.mongo.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.mongo.probes.liveness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.mongo.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: mongo-data
+      spec:
+        accessModes:
+          {{- toYaml .Values.mongo.persistence.accessModes | nindent 10 }}
+        {{- if .Values.mongo.persistence.storageClassName }}
+        storageClassName: {{ .Values.mongo.persistence.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.mongo.persistence.size }}

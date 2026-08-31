@@ -7,31 +7,63 @@ import adminRoute from './routes/adminRoute.js'
 import vendorRoute from './routes/venderRoute.js'
 import cors from 'cors'
 import cookieParser from "cookie-parser";
+import pinoHttp from "pino-http";
 import { cloudinaryConfig } from "./utils/cloudinaryConfig.js";
+import logger from "./utils/logger.js";
 
+// INC-003 fix: dotenv must load before anything reads process.env below.
+dotenv.config();
+
+// Logging throughout the application: catch crashes that would otherwise
+// restart silently under `restart: unless-stopped` with no record of why.
+process.on("uncaughtException", (err) => {
+  logger.fatal({ err }, "uncaught exception - process will exit");
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  logger.fatal({ err: reason }, "unhandled promise rejection - process will exit");
+  process.exit(1);
+});
 
 const App = express();
 
+// INC-011 fix: configure Cloudinary once at startup instead of on every request.
+cloudinaryConfig();
+
+// Structured, one-line-per-request access log (method, path, status, response
+// time) written as JSON to stdout, ahead of every other route/middleware so
+// every request is logged - including ones that error out before reaching
+// a route handler.
+App.use(
+  pinoHttp({
+    logger,
+    autoLogging: {
+      ignore: (req) => req.url === "/healthz",
+    },
+  })
+);
 
 App.use(express.json());
 App.use(cookieParser())
 
+// INC-006 fix: bind to the platform-provided PORT when present, falling
+// back to 3000 for local dev.
+const port = process.env.PORT || 3000;
 
-dotenv.config();
-const port = 3000;
+mongoose.connect(process.env.mongo_uri);
 
-mongoose
-  .connect(process.env.mongo_uri)
-  .then(console.log("connected"))
-  .catch((error) => console.error(error));
+const db = mongoose.connection;
+db.on("connected", () => logger.info("MongoDB connected"));
+db.on("error", (err) => logger.error({ err }, "MongoDB connection error"));
+db.on("disconnected", () => logger.warn("MongoDB disconnected"));
+db.on("reconnected", () => logger.info("MongoDB reconnected"));
 
-  
-
-App.listen(port, () => {
-  console.log("server listening !");
-});
-
-const allowedOrigins = ['https://rent-a-ride-two.vercel.app', 'http://localhost:5173']; // Add allowed origins here
+// INC-008 fix: allowed origins are configurable via env instead of a single
+// hardcoded Vercel URL, so this can deploy to a different domain without a
+// source change. Falls back to sensible local/prod defaults if unset.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim())
+  : ['https://rent-a-ride-two.vercel.app', 'http://localhost:5173']);
 
 App.use(
   cors({
@@ -41,25 +73,39 @@ App.use(
   })
 );
 
-
-App.use('*', cloudinaryConfig);
-
-// App.get('/*', (req, res) => res.sendFile(resolve(__dirname, '../public/index.html')));
-
-
 App.use("/api/user", userRoute);
 App.use("/api/auth", authRoute);
 App.use("/api/admin",adminRoute);
 App.use("/api/vendor",vendorRoute)
+
+// INC-022: lightweight, unauthenticated health endpoint for the container
+// HEALTHCHECK (see backend/Dockerfile) and any orchestrator liveness probe.
+// Reports Mongo connection state instead of just "process is alive", since
+// a process that's up but can't reach the database isn't actually healthy.
+App.get("/healthz", (req, res) => {
+  const dbReady = mongoose.connection.readyState === 1; // 1 = connected
+  res.status(dbReady ? 200 : 503).json({ status: dbReady ? "ok" : "degraded" });
+});
 
 
 
 App.use((err, req, res, next) => {
   const statusCode = err.statusCode || 500;
   const message = err.message || "internal server error";
+  // Logging throughout the application: every error that reaches this
+  // handler is logged with request context, not just returned to the
+  // client - previously these failed silently server-side.
+  (req.log || logger).error(
+    { err, statusCode, method: req.method, url: req.originalUrl },
+    message
+  );
   return res.status(statusCode).json({
     succes: false,
     message,
     statusCode,
   });
+});
+
+App.listen(port, () => {
+  logger.info(`server listening on port ${port} !`);
 });

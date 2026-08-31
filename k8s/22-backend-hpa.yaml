@@ -1,0 +1,59 @@
+# Scales the backend Deployment (21-backend.yaml) based on CPU and memory
+# utilization against the container's own resource *requests* - not the
+# raw usage number, and not the limit. E.g. a pod requesting cpu: 100m
+# that's actually using 80m of CPU is reported as 80% utilized.
+#
+# Requires the metrics-server addon to be running in-cluster - kind does
+# NOT ship this by default (see k8s/README.md's "Autoscaling" section for
+# the one-time setup needed on this cluster).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: rent-a-ride
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # backend requests cpu: 100m - scales up once average usage
+          # across pods crosses 70% of that (~70m/pod).
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          # backend requests memory: 128Mi - scales up past 80% (~102Mi/pod).
+          # Memory is included alongside CPU since a Node process under
+          # heavy request volume can grow its heap well before CPU alone
+          # would trigger a scale-up.
+          averageUtilization: 80
+  behavior:
+    # Scale up fast (real traffic spikes shouldn't wait), scale down slow
+    # (avoid flapping replicas up and down on noisy, momentary dips).
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+      selectPolicy: Min

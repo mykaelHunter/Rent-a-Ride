@@ -2,6 +2,7 @@ import User from "../models/userModel.js";
 import bcryptjs from "bcryptjs";
 import { errorHandler } from "../utils/error.js";
 import Jwt from "jsonwebtoken";
+import logger from "../utils/logger.js";
 
 const expireDate = new Date(Date.now() + 3600000);
 
@@ -27,17 +28,18 @@ export const signUp = async (req, res, next) => {
 
 //refreshTokens
 export const refreshToken = async (req, res, next) => {
-  // const refreshToken = req.cookies.refresh_token;
-
-  if (!req.headers.authorization) {
+  // INC-005 fix: parse the auth header defensively instead of assuming
+  // "Bearer <refresh>,<access>" is always present, which previously threw
+  // if the header was missing or in a standard "Bearer <token>" form.
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith("Bearer ")) {
     return next(errorHandler(403, "bad request no header provided"));
   }
 
-  const refreshToken = req.headers.authorization.split(" ")[1].split(",")[0];
-  const accessToken = req.headers.authorization.split(" ")[1].split(",")[1];
-
-  console.log(refreshToken);
-  console.log(accessToken);
+  const value = header.slice("Bearer ".length).trim();
+  const [refreshToken, accessToken] = value.includes(",")
+    ? value.split(",")
+    : [value, undefined];
 
   if (!refreshToken) {
     // res.clearCookie("access_token", "refresh_token");
@@ -151,7 +153,7 @@ export const signIn = async (req, res, next) => {
     next();
   } catch (error) {
     next(error);
-    console.log(error);
+    logger.error({ err: error });
   }
 };
 
