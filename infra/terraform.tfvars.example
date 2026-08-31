@@ -1,0 +1,24 @@
+# Copy this file to terraform.tfvars and adjust as needed.
+# terraform.tfvars is git-ignored - never commit real values there.
+
+aws_region   = "us-east-1"
+project_name = "rent-a-ride"
+environment  = "dev"
+
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_cidr   = "10.0.1.0/24"
+private_subnet_cidr  = "10.0.2.0/24"
+
+# IMPORTANT: restrict this to your own IP before applying, e.g. "41.x.x.x/32"
+# (find it with `curl ifconfig.me`). Left at 0.0.0.0/0 only so the stack
+# is usable out of the box.
+allowed_ssh_cidr = "0.0.0.0/0"
+
+bastion_instance_type  = "t3.micro"
+private_instance_type  = "t3a.medium"
+app_root_volume_size   = 20
+
+# Ports opened on the private instance, reachable only from within the VPC.
+private_ingress_ports = [3000, 30080, 30300]
+
+key_pair_name = "rent-a-ride-key"
