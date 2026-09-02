@@ -47,6 +47,19 @@ echo "== Copying Secrets (mongo-credentials, backend-secret) into ${NEW_NAMESPAC
 
 kubectl create namespace "$NEW_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
+# The namespace above was just created with plain `kubectl create`/`apply`,
+# not by Helm - but values.yaml's namespace.create defaults to true, so the
+# chart's own namespace.yaml template will also try to manage this same
+# Namespace object on install. Helm refuses to adopt a pre-existing
+# resource unless it already carries Helm's ownership metadata, so stamp
+# that on now (this is exactly what `helm install --create-namespace`
+# would have set, had the namespace not already existed for the secret
+# copy below).
+kubectl label namespace "$NEW_NAMESPACE" app.kubernetes.io/managed-by=Helm --overwrite
+kubectl annotate namespace "$NEW_NAMESPACE" \
+  meta.helm.sh/release-name=rent-a-ride-blue \
+  meta.helm.sh/release-namespace="$NEW_NAMESPACE" --overwrite
+
 copy_secret () {
   local name="$1"
   if ! kubectl get secret "$name" -n "$OLD_NAMESPACE" >/dev/null 2>&1; then
