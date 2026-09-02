@@ -79,6 +79,21 @@ copy_secret () {
 copy_secret mongo-credentials
 copy_secret backend-secret
 
+# backend-secret's mongo_uri was copied verbatim above and still points at
+# the OLD namespace's Mongo (mongo-0.mongo.<old>.svc.cluster.local). Since
+# blue runs its own local Mongo (values-blue.yaml sets mongo.enabled:
+# true), rewrite just the namespace segment of the host so it resolves
+# in-cluster once blue's own mongo-0 exists.
+if kubectl get secret backend-secret -n "$NEW_NAMESPACE" >/dev/null 2>&1; then
+  CUR_URI=$(kubectl get secret backend-secret -n "$NEW_NAMESPACE" -o jsonpath='{.data.mongo_uri}' 2>/dev/null | base64 -d || true)
+  if [[ -n "$CUR_URI" && "$CUR_URI" == *".mongo.${OLD_NAMESPACE}.svc"* ]]; then
+    NEW_URI="${CUR_URI//.mongo.${OLD_NAMESPACE}.svc/.mongo.${NEW_NAMESPACE}.svc}"
+    kubectl patch secret backend-secret -n "$NEW_NAMESPACE" --type='json' \
+      -p="[{\"op\":\"replace\",\"path\":\"/data/mongo_uri\",\"value\":\"$(printf '%s' "$NEW_URI" | base64 -w 0)\"}]"
+    echo "  rewrote backend-secret's mongo_uri: .mongo.${OLD_NAMESPACE}.svc -> .mongo.${NEW_NAMESPACE}.svc"
+  fi
+fi
+
 echo "== Removing the old ${OLD_NAMESPACE} deployment (frees NodePorts 30080/30300 for blue) =="
 
 if [[ "$DEPLOY_METHOD" == "helm" ]]; then
@@ -105,9 +120,9 @@ helm install rent-a-ride-blue "$CHART_PATH" \
 
 echo "== Waiting for blue's Deployments to roll out =="
 
+kubectl -n "$NEW_NAMESPACE" rollout status statefulset/mongo --timeout=180s
 kubectl -n "$NEW_NAMESPACE" rollout status deployment/backend --timeout=180s
 kubectl -n "$NEW_NAMESPACE" rollout status deployment/frontend --timeout=180s
-kubectl -n "$NEW_NAMESPACE" rollout status statefulset/mongo --timeout=180s || true
 
 echo
 echo "Done. 'blue' is now live on NodePorts 30080 (frontend) / 30300 (backend),"
