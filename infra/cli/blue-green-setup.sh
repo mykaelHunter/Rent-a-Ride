@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
 # One-time setup for blue/green cutover on the existing ALB: creates two
 # target groups (blue, green), registers the app instance in both at their
-# respective NodePorts, and points the existing HTTP listener's default
-# action at blue (the current stable, live version).
+# respective NodePorts, points the existing HTTP:80 listener's default
+# action at blue (the current stable, live version), and adds two extra
+# "test" listeners (8080 -> blue, 8081 -> green) so both target groups are
+# permanently attached to the load balancer.
+#
+# That last part matters for a reason that isn't obvious up front: ALB
+# only runs health checks against a target group once it's referenced by
+# at least one listener. A target group with targets registered but no
+# listener pointing at it reports state "unused" indefinitely - not
+# unhealthy, not healthy, just never checked at all. The 8080/8081
+# listeners exist purely to keep both colors permanently attached (and
+# therefore health-checked and reachable through the ALB directly for
+# pre-cutover testing), independent of whichever one :80's default action
+# currently points at.
 #
 # Run this ONCE. After this, use blue-green-cutover.sh to switch traffic.
 #
@@ -100,7 +112,34 @@ aws elbv2 register-targets --target-group-arn "$TG_BLUE_ARN" \
 aws elbv2 register-targets --target-group-arn "$TG_GREEN_ARN" \
   --targets "Id=${APP_INSTANCE_ID},Port=${GREEN_TRAFFIC_PORT}"
 
-echo "== Pointing the listener's default action at BLUE (current stable) =="
+echo "== Opening the ALB's SG to the two test listener ports (8080, 8081) =="
+
+aws ec2 authorize-security-group-ingress \
+  --group-id "$ALB_SG_ID" --protocol tcp --port 8080 --cidr 0.0.0.0/0 2>/dev/null \
+  || echo "  (port 8080 already authorized - skipping)"
+
+aws ec2 authorize-security-group-ingress \
+  --group-id "$ALB_SG_ID" --protocol tcp --port 8081 --cidr 0.0.0.0/0 2>/dev/null \
+  || echo "  (port 8081 already authorized - skipping)"
+
+echo "== Creating test listeners (8080 -> blue, 8081 -> green) =="
+echo "    (these keep both target groups attached to the ALB - see header comment)"
+
+aws elbv2 create-listener \
+  --load-balancer-arn "$ALB_ARN" \
+  --protocol HTTP --port 8080 \
+  --default-actions "Type=forward,TargetGroupArn=${TG_BLUE_ARN}" \
+  --query 'Listeners[0].ListenerArn' --output text 2>/dev/null \
+  || echo "  (listener on 8080 already exists - skipping)"
+
+aws elbv2 create-listener \
+  --load-balancer-arn "$ALB_ARN" \
+  --protocol HTTP --port 8081 \
+  --default-actions "Type=forward,TargetGroupArn=${TG_GREEN_ARN}" \
+  --query 'Listeners[0].ListenerArn' --output text 2>/dev/null \
+  || echo "  (listener on 8081 already exists - skipping)"
+
+echo "== Pointing the main :80 listener's default action at BLUE (current stable) =="
 
 aws elbv2 modify-listener \
   --listener-arn "$LISTENER_ARN" \
@@ -111,5 +150,12 @@ echo "Done. Target groups:"
 echo "  blue:  $TG_BLUE_ARN"
 echo "  green: $TG_GREEN_ARN"
 echo
-echo "Listener now forwards to blue. Once green is deployed and healthy,"
+ALB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" \
+  --query 'LoadBalancers[0].DNSName' --output text)
+echo "Test each color directly through the ALB (independent of :80's live target):"
+echo "  curl http://${ALB_DNS}:8080/   # always blue"
+echo "  curl http://${ALB_DNS}:8081/   # always green"
+echo
+echo ":80 (the live listener) now forwards to blue. Once green is deployed and"
+echo "reports healthy (aws elbv2 describe-target-health --target-group-arn ${TG_GREEN_ARN}),"
 echo "use blue-green-cutover.sh green to switch live traffic to it."

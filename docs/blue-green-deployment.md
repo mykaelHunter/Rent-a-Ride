@@ -22,11 +22,13 @@ modify-listener` call, not a Kubernetes-level change.
   nginx already reverse-proxies `/api/` to the backend Service
   in-cluster (see `client/nginx.conf`), so nothing is lost by skipping
   the cluster Ingress here.
-- **Two ALB target groups, one listener** — `rent-a-ride-tg-blue` and
-  `rent-a-ride-tg-green`, each health-checked independently. The
-  listener's default action points at whichever is currently live.
-  Switching is instant and trivially reversible; it doesn't touch
-  Kubernetes at all.
+- **Two ALB target groups, one live listener, two test listeners** —
+  `rent-a-ride-tg-blue` and `rent-a-ride-tg-green`, each health-checked
+  independently. `:80`'s default action points at whichever is currently
+  live; `:8080`/`:8081` always point at blue/green respectively so both
+  stay attached to the ALB (and therefore actively health-checked) no
+  matter which one `:80` currently forwards to. Switching `:80` is
+  instant and trivially reversible; it doesn't touch Kubernetes at all.
 
 ```
                          ALB (rent-a-ride-alb)
@@ -79,8 +81,18 @@ cd infra/cli
 
 This creates both target groups, registers the app instance in each at
 its NodePort, opens the private instance's security group to the ALB on
-all four ports (30080/30300/30081/30301), and points the listener's
-default action at `tg-blue` — matching what's already live.
+all four ports (30080/30300/30081/30301), adds two permanent **test
+listeners** on the ALB (8080 → blue, 8081 → green, see script header for
+why), and points the main `:80` listener's default action at `tg-blue` —
+matching what's already live.
+
+**Why the test listeners matter:** an ALB target group only gets health-
+checked once at least one listener references it. Without them, `tg-green`
+sits with a target registered but reports `unused` forever — not
+unhealthy, just never checked — until `:80`'s default action is pointed
+at it, which is exactly the thing you don't want to do before verifying
+it. The 8080/8081 listeners keep both colors permanently attached and
+checked regardless of which one is currently live on `:80`.
 
 **Drift note:** the security-group rules this adds go onto the
 Terraform-managed private SG (`infra/security_groups.tf`), same caveat as
@@ -110,12 +122,33 @@ helm upgrade --install rent-a-ride-green ./helm/rent-a-ride \
   -n green --create-namespace \
   -f helm/rent-a-ride/environments/values-green.yaml
 
-# 3. Verify green directly, bypassing the ALB entirely:
-curl http://<EC2-PUBLIC-IP>:30081/
+# 3. Verify green directly, bypassing the ALB's live listener entirely:
+curl http://<EC2-PUBLIC-IP>:30081/            # kind NodePort - see note below
 curl http://<EC2-PUBLIC-IP>:30301/healthz
+
+# 4. Verify through the ALB's test listener (this is what actually
+#    determines whether tg-green will report "healthy" for cutover):
+curl http://<ALB-DNS-NAME>:8081/
+aws elbv2 describe-target-health --target-group-arn <tg-green-arn>
 ```
 
-Green is now running and reachable on its own NodePort, but the ALB is
+**kind NodePort note:** 30081/30301 aren't in `k8s/kind-config.yaml`'s
+`extraPortMappings` (only 30080/30300 are, from before blue/green existed),
+and that file's mappings only take effect at cluster-creation time - kind
+won't pick up an edit on a running cluster. Until the cluster is recreated
+with green's ports added, step 3's curls need a manual forward from the
+EC2 host into the kind node container:
+
+```bash
+NODE_IP=$(docker inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' rent-a-ride-control-plane)
+sudo socat TCP-LISTEN:30081,fork,reuseaddr TCP:${NODE_IP}:30081 &
+sudo socat TCP-LISTEN:30301,fork,reuseaddr TCP:${NODE_IP}:30301 &
+```
+
+Step 4 (through the ALB) doesn't need this - the ALB reaches the instance's
+NodePort directly over the VPC, not through localhost.
+
+Green is now running and reachable on its own NodePort/test listener, but the ALB is
 still sending all live traffic to blue — nothing user-facing has changed
 yet.
 
@@ -168,6 +201,14 @@ gets staged and tested before its own cutover.
 - Health-check and traffic ports are hardcoded to 30080/30300 (blue) and
   30081/30301 (green) across the Helm values, the setup script, and the
   security-group rules — keep all three in sync if you ever change them.
+- `k8s/kind-config.yaml`'s `extraPortMappings` only covers blue's NodePorts
+  (30080/30300) since it predates green - green's NodePorts (30081/30301)
+  aren't reachable from the EC2 host directly (`curl localhost:30081`
+  fails) until either the kind cluster is recreated with green's ports
+  added to `extraPortMappings`, or a manual `socat` forward is set up (see
+  the "Deploying a new version to green" section above). This does **not**
+  affect the ALB, which reaches the instance's NodePorts over the VPC
+  network regardless of what's forwarded to `localhost` on the host.
 - If blue is ever fully decommissioned (not just idled), remember its
   Mongo StatefulSet is the one green depends on — don't tear down blue's
   namespace while green is live without migrating Mongo out first.

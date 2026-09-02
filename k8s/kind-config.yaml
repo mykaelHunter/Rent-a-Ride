@@ -24,11 +24,17 @@ nodes:
     labels:
       ingress-ready: "true"
     extraPortMappings:
-      - containerPort: 30080   # -> frontend NodePort (direct)
+      - containerPort: 30080   # -> blue frontend NodePort (direct)
         hostPort: 30080
         protocol: TCP
-      - containerPort: 30300   # -> backend NodePort (direct)
+      - containerPort: 30300   # -> blue backend NodePort (direct)
         hostPort: 30300
+        protocol: TCP
+      - containerPort: 30081   # -> green frontend NodePort (direct)
+        hostPort: 30081
+        protocol: TCP
+      - containerPort: 30301   # -> green backend NodePort (direct)
+        hostPort: 30301
         protocol: TCP
       # ingress-nginx controller, via hostNetwork: true (NOT a NodePort) -
       # the controller binds these ports directly on this node's own
