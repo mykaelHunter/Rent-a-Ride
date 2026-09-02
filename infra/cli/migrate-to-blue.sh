@@ -13,9 +13,10 @@
 # swap - not scripted here since it's a one-time migration, not a
 # repeatable path.
 #
-# Assumes: the live release is a Helm release in namespace "rent-a-ride"
-# installed from ./helm/rent-a-ride, with mongo-credentials and
-# backend-secret already present in that namespace.
+# Assumes: the live app is running in namespace "rent-a-ride" - either as
+# a Helm release, or applied directly via `kubectl apply -k k8s/` (both are
+# detected and handled). mongo-credentials and backend-secret must already
+# be present in that namespace.
 
 set -euo pipefail
 
@@ -24,14 +25,23 @@ NEW_NAMESPACE="blue"
 CHART_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../helm/rent-a-ride" && pwd)"
 VALUES_FILE="${CHART_PATH}/environments/values-blue.yaml"
 
-echo "== Finding the live Helm release in namespace ${OLD_NAMESPACE} =="
+echo "== Finding the live app in namespace ${OLD_NAMESPACE} =="
 
-OLD_RELEASE=$(helm list -n "$OLD_NAMESPACE" -q | head -n1)
-if [[ -z "$OLD_RELEASE" ]]; then
-  echo "No Helm release found in namespace ${OLD_NAMESPACE}. Nothing to migrate." >&2
+OLD_RELEASE=$(helm list -n "$OLD_NAMESPACE" -q 2>/dev/null | head -n1 || true)
+
+if [[ -n "$OLD_RELEASE" ]]; then
+  DEPLOY_METHOD="helm"
+  echo "Live release: ${OLD_RELEASE} (Helm, namespace ${OLD_NAMESPACE})"
+elif kubectl get deployment backend frontend -n "$OLD_NAMESPACE" >/dev/null 2>&1; then
+  DEPLOY_METHOD="kubectl"
+  echo "Live app found in ${OLD_NAMESPACE}, but not installed via Helm"
+  echo "(likely applied directly with 'kubectl apply -k k8s/' - that's fine,"
+  echo " this script will just delete the namespace instead of 'helm uninstall')."
+else
+  echo "No app found in namespace ${OLD_NAMESPACE} (neither a Helm release nor" >&2
+  echo "backend/frontend Deployments). Nothing to migrate." >&2
   exit 1
 fi
-echo "Live release: ${OLD_RELEASE} (namespace ${OLD_NAMESPACE})"
 
 echo "== Copying Secrets (mongo-credentials, backend-secret) into ${NEW_NAMESPACE} =="
 
@@ -56,9 +66,20 @@ copy_secret () {
 copy_secret mongo-credentials
 copy_secret backend-secret
 
-echo "== Removing the old release (frees NodePorts 30080/30300 for blue) =="
+echo "== Removing the old ${OLD_NAMESPACE} deployment (frees NodePorts 30080/30300 for blue) =="
 
-helm uninstall "$OLD_RELEASE" -n "$OLD_NAMESPACE"
+if [[ "$DEPLOY_METHOD" == "helm" ]]; then
+  helm uninstall "$OLD_RELEASE" -n "$OLD_NAMESPACE"
+else
+  # Delete the NodePort-holding Services explicitly first and wait for them
+  # to actually go away, since NodePort release happens on Service
+  # deletion, not on namespace deletion (which can take a while longer if
+  # anything in the namespace has finalizers).
+  kubectl delete service frontend backend-external -n "$OLD_NAMESPACE" --ignore-not-found --wait=true
+  kubectl delete namespace "$OLD_NAMESPACE"
+  echo "(namespace deletion requested - it may finish terminating in the background;"
+  echo " the NodePorts themselves are already free since their Services are gone)"
+fi
 
 # Give the API server a moment to actually release the NodePort allocation.
 sleep 5
@@ -81,10 +102,12 @@ echo "matching what the ALB already targets. Verify directly:"
 echo "  curl http://localhost:30080/"
 echo "  curl http://localhost:30300/healthz"
 echo
-echo "Old namespace '${OLD_NAMESPACE}' is now empty (release uninstalled) but"
-echo "not deleted - remove it once you've confirmed blue is healthy:"
-echo "  kubectl delete namespace ${OLD_NAMESPACE}"
-echo
+if [[ "$DEPLOY_METHOD" == "helm" ]]; then
+  echo "Old namespace '${OLD_NAMESPACE}' is now empty (release uninstalled) but"
+  echo "not deleted - remove it once you've confirmed blue is healthy:"
+  echo "  kubectl delete namespace ${OLD_NAMESPACE}"
+  echo
+fi
 echo "Next: run infra/cli/blue-green-setup.sh to wire the ALB's target groups"
 echo "to blue (and pre-create green's), then deploy a new version to green"
 echo "per docs/blue-green-deployment.md."
