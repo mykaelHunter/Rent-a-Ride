@@ -69,6 +69,19 @@ resource "aws_instance" "app" {
   subnet_id              = aws_subnet.private.id
   vpc_security_group_ids = [aws_security_group.private.id]
   key_name               = aws_key_pair.this.key_name
+  iam_instance_profile   = aws_iam_instance_profile.app_cwagent.name
+
+  # http_put_response_hop_limit is 2 (not the default 1) because
+  # CloudWatch Agent runs directly on this host (1 hop to IMDS is
+  # enough), but Fluent Bit runs inside kind's node *containers* -
+  # container -> host -> IMDS is a second hop, and hop-limit 1 silently
+  # drops that request (see docs/incident-log.md style note: this bit
+  # Fluent Bit's cloudwatch_logs output during initial monitoring setup).
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 3
+  }
 
   root_block_device {
     volume_size           = var.app_root_volume_size
