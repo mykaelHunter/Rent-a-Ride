@@ -1,0 +1,120 @@
+# kube-prometheus-stack values for the Rent-a-Ride kind cluster.
+#
+# This one chart deploys: the Prometheus Operator, Prometheus itself,
+# Alertmanager, Grafana, node-exporter (DaemonSet - node CPU/memory/disk/
+# network), and kube-state-metrics (pod/deployment/node status - "Pod
+# status" in the task list comes from here, not from Prometheus scraping
+# containers directly). Container/pod CPU & memory come from cAdvisor,
+# which Prometheus scrapes via the kubelet automatically once
+# kubelet.serviceMonitor is enabled below - no separate agent needed for
+# that piece.
+#
+# Install:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm repo update
+#   helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+#     -n monitoring --create-namespace -f helm-values-kube-prometheus-stack.yaml
+
+fullnameOverride: kube-prometheus-stack
+
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    resources:
+      requests:
+        cpu: 100m
+        memory: 400Mi
+      limits:
+        memory: 800Mi
+    # Let Prometheus pick up ServiceMonitors from any namespace, not just
+    # the monitoring namespace - needed for ../monitoring/prometheus-grafana/
+    # ingress-nginx-servicemonitor.yaml (ingress-nginx namespace) and any
+    # future one added for the rent-a-ride namespace itself.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+# cAdvisor (container/pod CPU & memory) and kubelet metrics, scraped
+# directly from each node's kubelet - this is what "Pod CPU" / "Pod
+# memory" / "Container metrics" in the task list actually come from.
+# kind's control-plane components (etcd, controller-manager, scheduler,
+# kube-proxy) bind their metrics ports to 127.0.0.1 inside their own
+# network namespace - Prometheus scraping from the node's external IP
+# can never reach them there, by kind's own design, not a
+# misconfiguration on our end. Disabled here rather than left to show as
+# permanent "down" targets.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+kubelet:
+  enabled: true
+  serviceMonitor:
+    cAdvisor: true
+    resource: false  # 404s on this kubelet version, same story as probes below
+    probes: false   # 404s on many kubelet versions - not something kind exposes by default
+
+kubeStateMetrics:
+  enabled: true
+
+nodeExporter:
+  enabled: true
+
+grafana:
+  enabled: true
+  adminPassword: changeme-before-apply   # override via --set grafana.adminPassword=... at install time, don't leave this in git
+  service:
+    type: NodePort
+    nodePort: 30030
+  # Auto-provision Prometheus as Grafana's default data source - "Verify
+  # the connection between Grafana and Prometheus" in step 8 is really
+  # just confirming this wiring worked (Grafana -> Explore -> run a query).
+  additionalDataSources: []   # kube-prometheus-stack wires the in-cluster Prometheus datasource automatically
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+      # Any ConfigMap in ANY namespace labeled grafana_dashboard=1
+      # gets auto-loaded into Grafana - this is how
+      # dashboards/rentaride-app-dashboard-configmap.yaml gets picked up
+      # without manual import.
+
+  # A handful of well-known community dashboard IDs get auto-imported for
+  # the generic infra/Kubernetes side of step 9, so only the
+  # application-specific dashboard needs to be hand-built (see
+  # dashboards/rentaride-app-dashboard-configmap.yaml).
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: default
+          orgId: 1
+          folder: ""
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/default
+  dashboards:
+    default:
+      node-exporter-full:
+        gnetId: 1860
+        revision: 37
+        datasource: Prometheus
+      kubernetes-cluster-monitoring:
+        gnetId: 315
+        revision: 3
+        datasource: Prometheus
+      kubernetes-pods:
+        gnetId: 6417
+        revision: 1
+        datasource: Prometheus
+
+alertmanager:
+  enabled: true

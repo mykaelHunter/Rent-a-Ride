@@ -26,6 +26,11 @@ fullnameOverride: ""
 # MongoDB (StatefulSet)
 # ---------------------------------------------------------------------------
 mongo:
+  # Whether this release owns a mongo StatefulSet/ConfigMap. Set to false
+  # (see environments/values-green.yaml) for a release that shares another
+  # namespace's Mongo instead - backend.secret's mongo_uri then points at
+  # that namespace directly, e.g. mongo-0.mongo.blue.svc.cluster.local.
+  enabled: true
   name: mongo
   image:
     repository: mongo
