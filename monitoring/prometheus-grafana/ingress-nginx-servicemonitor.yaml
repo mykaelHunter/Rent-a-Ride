@@ -1,0 +1,48 @@
+# ingress-nginx already exposes Prometheus metrics on port 10254 (it's
+# built into the controller image) - it just isn't scraped by default on
+# a kind install. This is the lowest-effort path to real "application
+# performance" metrics (request rate, response time, error rate) without
+# adding a /metrics endpoint to the backend itself.
+#
+# Apply AFTER kube-prometheus-stack is installed (needs its ServiceMonitor
+# CRD) and AFTER ingress-nginx is installed:
+#   kubectl apply -f ingress-nginx-servicemonitor.yaml
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingress-nginx-controller-metrics
+  namespace: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 10254
+      targetPort: 10254
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/component: controller
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ingress-nginx
+  namespace: ingress-nginx
+  labels:
+    release: kube-prometheus-stack   # must match the Helm release name so Prometheus's ServiceMonitor selector picks this up
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingress-nginx
+      app.kubernetes.io/part-of: ingress-nginx
+  namespaceSelector:
+    matchNames:
+      - ingress-nginx
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics

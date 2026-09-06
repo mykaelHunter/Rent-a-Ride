@@ -58,6 +58,18 @@ resource "aws_security_group" "private" {
     }
   }
 
+  # Grafana NodePort, reachable via the internet-facing NLB
+  # (grafana-nlb.tf). NLBs preserve the client's real source IP through
+  # to instance targets by default, so this must allow the actual
+  # browsing client's CIDR - not the NLB's own subnet.
+  ingress {
+    description = "Grafana NodePort from NLB (client IP preserved)"
+    from_port   = 30030
+    to_port     = 30030
+    protocol    = "tcp"
+    cidr_blocks = [var.grafana_allowed_cidr]
+  }
+
   egress {
     description = "All outbound (via NAT Gateway)"
     from_port   = 0
