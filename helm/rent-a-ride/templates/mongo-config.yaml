@@ -1,3 +1,4 @@
+{{- if .Values.mongo.enabled }}
 # Non-secret Mongo settings. mongo-credentials (the Secret with the root
 # username/password) is NOT created by this chart unless mongo.secret.create
 # is explicitly set to true - see values.yaml for why.
@@ -27,4 +28,5 @@ type: Opaque
 stringData:
   MONGO_INITDB_ROOT_USERNAME: {{ .Values.mongo.secret.rootUsername | quote }}
   MONGO_INITDB_ROOT_PASSWORD: {{ .Values.mongo.secret.rootPassword | quote }}
+{{- end }}
 {{- end }}

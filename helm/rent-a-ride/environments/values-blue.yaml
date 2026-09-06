@@ -1,0 +1,29 @@
+# Blue = the stable, currently-live version. Owns the real Mongo database.
+#
+# Install/upgrade with:
+#   helm upgrade --install rent-a-ride-blue ./helm/rent-a-ride \
+#     -n blue --create-namespace \
+#     -f helm/rent-a-ride/environments/values-blue.yaml
+
+namespace:
+  name: blue
+
+mongo:
+  enabled: true   # blue owns the shared database
+
+# No cluster Ingress for blue/green - the ALB targets each color's frontend
+# NodePort directly, and the frontend's own nginx already reverse-proxies
+# /api/ to the backend Service in-cluster (see client/nginx.conf / INC-020),
+# so a cluster Ingress isn't needed for routing. Running the shared
+# hostNetwork ingress-nginx controller against two namespaces with
+# identical "/" and "/api" path rules would be ambiguous anyway.
+ingress:
+  enabled: false
+
+frontend:
+  service:
+    nodePort: 30080   # ALB traffic port when blue is live
+
+backend:
+  externalService:
+    nodePort: 30300   # ALB health-check port when blue is live
