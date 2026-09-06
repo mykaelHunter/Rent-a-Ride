@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rentaride-app-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  rentaride-app.json: |
+    {
+      "title": "Rent-a-Ride — App, Kubernetes & Infra",
+      "uid": "rentaride-app",
+      "timezone": "browser",
+      "refresh": "10s",
+      "time": { "from": "now-30m", "to": "now" },
+      "schemaVersion": 39,
+      "panels": [
+        {
+          "title": "Node CPU utilization (%)",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 12, "x": 0, "y": 0 },
+          "targets": [{
+            "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+            "legendFormat": "{{instance}}"
+          }]
+        },
+        {
+          "title": "Node memory used (%)",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 12, "x": 12, "y": 0 },
+          "targets": [{
+            "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100",
+            "legendFormat": "{{instance}}"
+          }]
+        },
+        {
+          "title": "Node disk used - /var (%, proxy for real disk usage)",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 12, "x": 0, "y": 7 },
+          "targets": [{
+            "expr": "100 - (node_filesystem_avail_bytes{mountpoint=\"/var\"} / node_filesystem_size_bytes{mountpoint=\"/var\"} * 100)",
+            "legendFormat": "{{instance}}"
+          }],
+          "description": "node-exporter excludes 'overlay' filesystems by default, and kind's node containers' real root IS overlay - so mountpoint=\"/\" never exists here. /var is the closest available real (ext4, bind-mounted) proxy for actual disk usage on this setup."
+        },
+        {
+          "title": "Node network I/O (bytes/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 12, "x": 12, "y": 7 },
+          "targets": [
+            { "expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[5m])", "legendFormat": "rx {{instance}} {{device}}" },
+            { "expr": "rate(node_network_transmit_bytes_total{device!=\"lo\"}[5m])", "legendFormat": "tx {{instance}} {{device}}" }
+          ]
+        },
+        {
+          "title": "Pod status (count by phase)",
+          "type": "stat",
+          "gridPos": { "h": 6, "w": 8, "x": 0, "y": 14 },
+          "targets": [{
+            "expr": "sum by (phase) (kube_pod_status_phase{namespace=\"rent-a-ride\"} == 1)",
+            "legendFormat": "{{phase}}"
+          }]
+        },
+        {
+          "title": "Container CPU usage - rent-a-ride (cores)",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 8, "x": 8, "y": 14 },
+          "targets": [{
+            "expr": "sum by (pod, container) (rate(container_cpu_usage_seconds_total{namespace=\"rent-a-ride\", container!=\"\"}[5m]))",
+            "legendFormat": "{{pod}}/{{container}}"
+          }]
+        },
+        {
+          "title": "Container memory working set - rent-a-ride",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 8, "x": 16, "y": 14 },
+          "targets": [{
+            "expr": "sum by (pod, container) (container_memory_working_set_bytes{namespace=\"rent-a-ride\", container!=\"\"})",
+            "legendFormat": "{{pod}}/{{container}}"
+          }]
+        },
+        {
+          "title": "Application request rate (req/s, via ingress-nginx)",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 8, "x": 0, "y": 21 },
+          "targets": [{
+            "expr": "sum(rate(nginx_ingress_controller_nginx_process_requests_total[5m]))",
+            "legendFormat": "requests/s"
+          }],
+          "description": "This build of ingress-nginx only exposes an unlabeled, controller-wide request counter (no per-ingress/path/status breakdown) - see the text panel for why p95 latency and error rate aren't available from this source."
+        },
+        {
+          "title": "Application latency & error rate — not available from ingress-nginx",
+          "type": "text",
+          "gridPos": { "h": 7, "w": 16, "x": 8, "y": 21 },
+          "options": {
+            "mode": "markdown",
+            "content": "**This ingress-nginx build doesn't expose per-request metrics.**\n\nChecked directly: only process-level counters exist here (`nginx_ingress_controller_nginx_process_requests_total`, connections, CPU/memory) - none of the labeled, per-request metrics (`_requests`, `_request_duration_seconds`, status-code breakdowns) that would normally provide p50/p95 latency or a real error-rate percentage. This isn't a scrape or config problem - the metrics genuinely don't exist in this controller build's `/metrics` output.\n\nTo get real latency/error-rate panels, add a `/metrics` endpoint directly to the backend via `prom-client` (see `docs/PROMETHEUS_GRAFANA.md`'s \"Optional: true custom application metrics\" section) and point a `ServiceMonitor` at it - that gives accurate in-process timing and status-code labels the ingress layer can't provide here."
+          }
+        }
+      ]
+    }

@@ -1,3 +1,4 @@
+{{- if .Values.mongo.enabled }}
 # Headless Service (clusterIP: None) - required for the StatefulSet, gives
 # each pod a stable DNS identity: <mongo.name>-0.<mongo.name>.<namespace>.svc.cluster.local
 apiVersion: v1
@@ -90,3 +91,4 @@ spec:
         resources:
           requests:
             storage: {{ .Values.mongo.persistence.size }}
+{{- end }}

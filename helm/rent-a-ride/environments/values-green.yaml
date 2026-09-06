@@ -1,0 +1,42 @@
+# Green = the new version being staged before cutover. Shares blue's
+# Mongo database (mongo.enabled: false here) so a cutover carries no data
+# migration - update backend.image.tag (and frontend.image.tag) below to
+# the new version you're rolling out.
+#
+# Install/upgrade with:
+#   helm upgrade --install rent-a-ride-green ./helm/rent-a-ride \
+#     -n green --create-namespace \
+#     -f helm/rent-a-ride/environments/values-green.yaml
+
+namespace:
+  name: green
+
+mongo:
+  enabled: false   # green shares blue's database - see backend-secret note below
+
+ingress:
+  enabled: false   # see values-blue.yaml for why
+
+frontend:
+  # image:
+  #   tag: "<new-version-tag-or-digest>"
+  service:
+    nodePort: 30081   # distinct from blue's 30080 so both can run at once
+
+backend:
+  # image:
+  #   tag: "<new-version-tag-or-digest>"
+  externalService:
+    nodePort: 30301   # distinct from blue's 30300
+
+# --------------------------------------------------------------------------
+# backend-secret for green must be created separately (backend.secret.create
+# stays false here, same as blue) with mongo_uri pointed at BLUE's Mongo via
+# cross-namespace Service DNS, not a local one:
+#
+#   mongo_uri: "mongodb://<user>:<url-encoded-pass>@mongo-0.mongo.blue.svc.cluster.local:27017/rent-a-ride?authSource=admin"
+#
+# Every other key (ACCESS_TOKEN, CLOUD_NAME, RAZORPAY_KEY_ID, etc.) can be
+# copied verbatim from blue's backend-secret - those are app-level
+# credentials, not environment-specific ones.
+# --------------------------------------------------------------------------

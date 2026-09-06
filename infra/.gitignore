@@ -1,0 +1,13 @@
+# Local Terraform state
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+*.tfplan
+
+# Real variable values
+terraform.tfvars
+*.auto.tfvars
+
+# Generated SSH private key
+keys/
