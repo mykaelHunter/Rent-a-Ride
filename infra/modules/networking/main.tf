@@ -17,35 +17,43 @@ resource "aws_vpc" "main" {
 }
 
 # ---------------------------------------------------------------------------
-# Subnets - public in AZ[0], private in AZ[1]
+# Subnets
+#
+# Two public + two private subnets, one pair per AZ. Two public subnets are
+# required by the ECS module's ALB (an ALB needs subnets in >= 2 AZs); two
+# private subnets let ECS tasks spread across AZs too. The original
+# single-public/single-private layout used by the bastion module is
+# preserved - it just consumes subnet [0] from each list.
 # ---------------------------------------------------------------------------
 
 resource "aws_subnet" "public" {
+  count                   = length(var.public_subnet_cidrs)
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = var.public_subnet_cidr
-  availability_zone       = data.aws_availability_zones.available.names[0]
+  cidr_block              = var.public_subnet_cidrs[count.index]
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
 
   tags = {
-    Name = "${var.project_name}-public-subnet"
+    Name = "${var.project_name}-public-subnet-${count.index}"
     Tier = "public"
   }
 }
 
 resource "aws_subnet" "private" {
+  count                   = length(var.private_subnet_cidrs)
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = var.private_subnet_cidr
-  availability_zone       = data.aws_availability_zones.available.names[1]
+  cidr_block              = var.private_subnet_cidrs[count.index]
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = false
 
   tags = {
-    Name = "${var.project_name}-private-subnet"
+    Name = "${var.project_name}-private-subnet-${count.index}"
     Tier = "private"
   }
 }
 
 # ---------------------------------------------------------------------------
-# Internet Gateway - egress/ingress for the public subnet
+# Internet Gateway
 # ---------------------------------------------------------------------------
 
 resource "aws_internet_gateway" "main" {
@@ -57,9 +65,9 @@ resource "aws_internet_gateway" "main" {
 }
 
 # ---------------------------------------------------------------------------
-# NAT Gateway - lets the private subnet reach the internet (outbound only),
-# without ever being directly reachable from it. Lives in the public
-# subnet and needs its own Elastic IP.
+# NAT Gateway - single NAT in public subnet [0], shared by every private
+# subnet. Cheaper than one-per-AZ; the trade-off is that a NAT-AZ outage
+# takes egress down for every private subnet, not just one.
 # ---------------------------------------------------------------------------
 
 resource "aws_eip" "nat" {
@@ -74,7 +82,7 @@ resource "aws_eip" "nat" {
 
 resource "aws_nat_gateway" "main" {
   allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public.id
+  subnet_id     = aws_subnet.public[0].id
 
   tags = {
     Name = "${var.project_name}-nat-gw"
@@ -114,11 +122,13 @@ resource "aws_route_table" "private" {
 }
 
 resource "aws_route_table_association" "public" {
-  subnet_id      = aws_subnet.public.id
+  count          = length(aws_subnet.public)
+  subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
 }
 
 resource "aws_route_table_association" "private" {
-  subnet_id      = aws_subnet.private.id
+  count          = length(aws_subnet.private)
+  subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private.id
 }
