@@ -16,6 +16,21 @@ resource "aws_ecs_cluster" "this" {
 }
 
 # ---------------------------------------------------------------------------
+# Service Connect namespace - lets the frontend container reach the
+# backend at the literal hostname "backend" (matching client/nginx.conf's
+# `proxy_pass http://backend:3000`, unchanged from its Docker Compose
+# form) without any app-code change. A per-task sidecar proxy intercepts
+# calls to that configured alias and forwards them over the real network
+# to a backend task - unlike plain Cloud Map/Route 53 DNS, this doesn't
+# depend on the VPC's DNS search domain matching, so the bare "backend"
+# (no dots) just works.
+# ---------------------------------------------------------------------------
+
+resource "aws_service_discovery_http_namespace" "this" {
+  name = "${var.project_name}-${var.environment}"
+}
+
+# ---------------------------------------------------------------------------
 # Security groups
 #   alb_sg      - internet -> ALB, port 80 (and 443 if a cert is supplied)
 #   ecs_tasks_sg - ALB -> ECS tasks, container ports only
@@ -77,6 +92,20 @@ resource "aws_security_group" "ecs_tasks" {
     to_port         = var.frontend_container_port
     protocol        = "tcp"
     security_groups = [aws_security_group.alb.id]
+  }
+
+  # Service Connect's per-task proxy makes a real network hop between
+  # tasks (frontend's proxy intercepts the "backend" hostname locally,
+  # then forwards over the network to a backend task's ENI on its real
+  # container port) - self-referencing so any task in this SG can reach
+  # any other task in this SG, on any port, rather than opening one
+  # narrow rule per service.
+  ingress {
+    description = "Inter-task traffic within this SG (ECS Service Connect)"
+    from_port   = 0
+    to_port     = 65535
+    protocol    = "tcp"
+    self        = true
   }
 
   egress {
@@ -256,6 +285,28 @@ resource "aws_iam_role" "task" {
   assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
 }
 
+# The AmazonECSTaskExecutionRolePolicy attached above covers ECR pulls and
+# awslogs writes, but NOT reading secrets - without this, any task with a
+# non-empty backend_secrets fails at startup with a
+# ResourceInitializationError (a different failure mode than a container
+# crash: the task never reaches RUNNING at all). Scoped to just the ARNs
+# passed in, not "*".
+data "aws_iam_policy_document" "execution_secrets" {
+  count = length(var.backend_secrets) > 0 ? 1 : 0
+
+  statement {
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = values(var.backend_secrets)
+  }
+}
+
+resource "aws_iam_role_policy" "execution_secrets" {
+  count  = length(var.backend_secrets) > 0 ? 1 : 0
+  name   = "${var.project_name}-${var.environment}-ecs-execution-secrets"
+  role   = aws_iam_role.execution.name
+  policy = data.aws_iam_policy_document.execution_secrets[0].json
+}
+
 # ---------------------------------------------------------------------------
 # CloudWatch log groups
 # ---------------------------------------------------------------------------
@@ -290,6 +341,7 @@ resource "aws_ecs_task_definition" "backend" {
       essential = true
       portMappings = [
         {
+          name          = "backend"
           containerPort = var.backend_container_port
           protocol      = "tcp"
         }
@@ -380,6 +432,25 @@ resource "aws_ecs_service" "backend" {
     container_port   = var.backend_container_port
   }
 
+  # Publishes itself reachable at the literal hostname "backend" (the
+  # client_alias.dns_name) to anything else in this namespace - the
+  # frontend's Service Connect proxy is what makes that alias resolvable
+  # inside the frontend task without any code/config change on its side.
+  service_connect_configuration {
+    enabled   = true
+    namespace = aws_service_discovery_http_namespace.this.arn
+
+    service {
+      port_name      = "backend"
+      discovery_name = "backend"
+
+      client_alias {
+        port     = var.backend_container_port
+        dns_name = "backend"
+      }
+    }
+  }
+
   depends_on = [aws_lb_listener_rule.backend_http]
 }
 
@@ -400,6 +471,15 @@ resource "aws_ecs_service" "frontend" {
     target_group_arn = aws_lb_target_group.frontend.arn
     container_name   = "frontend"
     container_port   = var.frontend_container_port
+  }
+
+  # Doesn't publish anything of its own (nothing calls "frontend" by
+  # name) - just needs to be in the namespace so its per-task proxy picks
+  # up the "backend" alias published above and can intercept
+  # nginx's proxy_pass http://backend:3000 locally.
+  service_connect_configuration {
+    enabled   = true
+    namespace = aws_service_discovery_http_namespace.this.arn
   }
 
   depends_on = [aws_lb_listener.http]

@@ -43,7 +43,7 @@ backend_image_tag  = "latest"
 frontend_image_tag = "latest"
 
 backend_container_port  = 3000
-frontend_container_port = 80
+frontend_container_port = 8080 # matches client/nginx.conf's `listen` directive - not 80
 
 backend_desired_count  = 1
 frontend_desired_count = 1
@@ -52,10 +52,37 @@ backend_environment = {
   NODE_ENV = "production"
 }
 
-# Secrets (e.g. Mongo URI) should come from Secrets Manager/SSM, not plain
-# vars - point backend_secrets at the ARN and ECS injects it at runtime:
+# --- Secrets (don't actually set real values in THIS file - it's an
+# example. Pass real ones via -var/-var-file/TF_VAR_* at apply time, not
+# a committed terraform.tfvars. See the Secrets section of the README.) ---
+
+# Mongo connection string. Shorthand for putting mongo_uri in
+# backend_secret_values below - kept separate since every deployment
+# needs it. Injected as env var mongo_uri (lowercase - that's the exact
+# name server.js reads via process.env.mongo_uri, unlike every other
+# secret here which IS uppercase).
+# mongo_uri = "mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/rent-a-ride?retryWrites=true&w=majority"
+
+# Everything else the app needs at runtime - the Secrets Manager
+# equivalent of the kubectl --from-literal= flags from the Kubernetes
+# deployment. One Secrets Manager secret gets created per key here.
+# backend_secret_values = {
+#   ACCESS_TOKEN    = "..."
+#   REFRESH_TOKEN   = "..."
+#   CLOUD_NAME      = "..."
+#   API_KEY         = "..."
+#   API_SECRET      = "..."
+#   EMAIL_HOST      = "..."
+#   EMAIL_PASSWORD  = "..."
+#   RAZORPAY_KEY_ID = "..."
+#   RAZORPAY_SECRET = "..."
+# }
+
+# Only for secrets you're ALREADY managing in Secrets Manager yourself
+# (i.e. Terraform didn't create them) - point this at the ARN instead.
+# Merged with mongo_uri/backend_secret_values, not a replacement for them.
 # backend_secrets = {
-#   MONGO_URI = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rent-a-ride/mongo-uri"
+#   SOME_PRE_EXISTING_SECRET = "arn:aws:secretsmanager:us-east-1:123456789012:secret:some-secret"
 # }
 backend_secrets = {}
 

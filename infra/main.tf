@@ -85,6 +85,72 @@ module "ecr" {
 
 locals {
   ecr_repository_urls = var.enable_ecr ? module.ecr[0].repository_urls : var.ecr_repository_urls_override
+
+  # Everything Terraform should create a Secrets Manager secret for:
+  # mongo_uri kept as its own variable purely because it's the one every
+  # deployment needs; everything else (ACCESS_TOKEN, RAZORPAY_SECRET,
+  # EMAIL_PASSWORD, etc.) goes in the generic backend_secret_values map.
+  # Both land in the same place, one Secrets Manager secret per key.
+  backend_secret_plaintext = merge(
+    var.backend_secret_values,
+    var.mongo_uri == "" ? {} : { mongo_uri = var.mongo_uri }
+  )
+
+  # for_each can't take a value derived from a sensitive variable (it
+  # would risk exposing a secret VALUE as a resource instance key in the
+  # plan) - so the resources below iterate over just the key NAMES
+  # (env var names like MONGO_URI, ACCESS_TOKEN - not secret themselves)
+  # pulled out with nonsensitive(), and look the actual value back up
+  # from local.backend_secret_plaintext per-iteration instead.
+  backend_secret_keys = nonsensitive(toset(keys(local.backend_secret_plaintext)))
+
+  # Merge the auto-created secrets' ARNs with whatever the caller passed
+  # in backend_secrets directly (secrets they're already managing
+  # elsewhere), so both paths work at once.
+  backend_secrets = merge(
+    var.backend_secrets,
+    { for key in local.backend_secret_keys : key => aws_secretsmanager_secret.backend[key].arn }
+  )
+}
+
+# ---------------------------------------------------------------------------
+# Backend secrets, stored as Secrets Manager secrets (one per key) rather
+# than plain Terraform variables in the task definition. Driven by
+# local.backend_secret_plaintext (mongo_uri + backend_secret_values
+# merged) - add a new secret by adding one line to backend_secret_values
+# in terraform.tfvars, nothing here needs to change.
+#
+# One secret per env var, not a single JSON blob, because that's what
+# ECS's per-container "secrets" field expects: each entry is one env var
+# name mapped to one secret ARN (optionally a ::key suffix for a JSON
+# secret's field) - one-per-key skips needing a jq/JSON-parsing step in
+# the container's entrypoint.
+# ---------------------------------------------------------------------------
+
+resource "aws_secretsmanager_secret" "backend" {
+  for_each = local.backend_secret_keys
+
+  # Secrets Manager names are case-sensitive and env vars are
+  # conventionally upper-snake-case; lowercasing here just keeps the
+  # secret name matching the kubectl-era key naming (mongo_uri,
+  # razorpay_secret, ...) without affecting the MONGO_URI-style env var
+  # name ECS actually injects (that's the map key itself, untouched).
+  name = "${var.project_name}/${var.environment}/${lower(each.value)}"
+
+  # Secrets Manager's default is a 7-30 day soft-delete window that
+  # blocks recreating a secret under the same name until it lapses (or
+  # you force-delete manually) - exactly what broke a prior apply here.
+  # 0 = force-delete-without-recovery on destroy, matching what these
+  # dev-environment secrets need: instantly reusable names, no grace
+  # period. Don't carry this into a real production secret you'd want
+  # a recovery window for if it were deleted by mistake.
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "backend" {
+  for_each      = local.backend_secret_keys
+  secret_id     = aws_secretsmanager_secret.backend[each.value].id
+  secret_string = local.backend_secret_plaintext[each.value]
 }
 
 module "ecs" {
@@ -104,9 +170,10 @@ module "ecs" {
   backend_image_url       = local.ecr_repository_urls["backend"]
   backend_image_tag       = var.backend_image_tag
   backend_container_port  = var.backend_container_port
+  backend_health_check_path = var.backend_health_check_path
   backend_desired_count   = var.backend_desired_count
   backend_environment     = var.backend_environment
-  backend_secrets         = var.backend_secrets
+  backend_secrets         = local.backend_secrets
 
   frontend_image_url      = local.ecr_repository_urls["frontend"]
   frontend_image_tag      = var.frontend_image_tag

@@ -192,23 +192,92 @@ Host rar-app
 
 ## Secrets
 
-Don't put real secrets (Mongo URI, JWT secret, etc.) in
-`backend_environment` — plain vars land in the task definition and
-Terraform state in cleartext. Put them in AWS Secrets Manager or SSM
-Parameter Store and reference them via `backend_secrets`, which maps env
-var name → ARN and lets ECS inject the value at container start:
+Don't put real secrets in `backend_environment` — plain vars land in the
+task definition in cleartext, visible to anyone with
+`ecs:DescribeTaskDefinition`. There are three ways to get a secret into
+the backend container, all landing in the same place (one Secrets
+Manager secret per key, injected via ECS's `secrets` field):
+
+**1. `mongo_uri`** — every deployment needs this one, so it gets its own
+variable. Injected as env var `mongo_uri` (lowercase, matching what
+`server.js` actually reads via `process.env.mongo_uri` — env var names
+are case-sensitive, so this one is deliberately NOT the usual
+`MONGO_URI` convention):
+
+```bash
+terraform apply -target=module.ecs -var='mongo_uri=mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/rent-a-ride'
+```
+
+**2. `backend_secret_values`** — everything else the app needs at
+runtime. This is the Secrets Manager equivalent of the
+`kubectl create secret generic backend-secret --from-literal=...`
+step from a Kubernetes deployment — same keys, same values, just
+provisioned by Terraform instead of `kubectl`:
+
+```bash
+terraform apply -target=module.ecs -var-file=secrets.tfvars
+```
 
 ```hcl
-backend_secrets = {
-  MONGO_URI  = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rent-a-ride/mongo-uri"
-  JWT_SECRET = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rent-a-ride/jwt-secret"
+# secrets.tfvars - see the .gitignore note below
+backend_secret_values = {
+  ACCESS_TOKEN    = "..."
+  REFRESH_TOKEN   = "..."
+  CLOUD_NAME      = "..."
+  API_KEY         = "..."
+  API_SECRET      = "..."
+  EMAIL_HOST      = "..."
+  EMAIL_PASSWORD  = "..."
+  RAZORPAY_KEY_ID = "..."
+  RAZORPAY_SECRET = "..."
 }
 ```
 
-The `execution` IAM role only has the managed
-`AmazonECSTaskExecutionRolePolicy` attached, which does **not** include
-`secretsmanager:GetSecretValue` — add that permission (scoped to your
-secret ARNs) to the execution role before relying on `backend_secrets`.
+One thing that does **not** carry over as-is: the Kubernetes setup's
+`MONGO_INITDB_ROOT_USERNAME`/`PASSWORD` secret existed to bootstrap a
+self-hosted `mongo-0` StatefulSet's root user on first boot. That's not
+applicable once Mongo lives in Atlas (Atlas creates its database user
+through its own UI/API) — only add those two keys here if you're
+self-hosting Mongo as a separate ECS service or EC2 instance instead of
+using Atlas, and wire them into *that* container's task definition, not
+the backend's.
+
+Whichever of #1/#2 you use, **never** in a committed `terraform.tfvars`
+— pass via `-var`, `-var-file` pointing at a git-ignored file, or
+`TF_VAR_*` env vars in your shell/CI secrets store. If you use a
+`-var-file`, add its name to `.gitignore` (`secrets.tfvars` isn't
+covered by the existing `terraform.tfvars`/`*.auto.tfvars` patterns).
+Both variables are marked `sensitive`, so they won't appear in
+`plan`/`apply` output, but they do land in Terraform state regardless of
+how they're passed in — state itself should be treated as sensitive
+(e.g. an S3 backend with encryption + access controls), independent of
+this.
+
+**3. `backend_secrets`** — for secrets you're *already* managing in
+Secrets Manager yourself (Terraform didn't create them). Point this at
+the ARN directly; it's merged with #1/#2, not a replacement:
+
+```hcl
+backend_secrets = {
+  SOME_PRE_EXISTING_SECRET = "arn:aws:secretsmanager:us-east-1:123456789012:secret:some-secret"
+}
+```
+
+The secrets Terraform creates (#1/#2) are set with
+`recovery_window_in_days = 0`, so `terraform destroy` deletes them
+immediately instead of Secrets Manager's default 7-30 day soft-delete
+window. Without this, a destroy/recreate cycle (e.g. tearing down and
+rebuilding a dev environment) hits `InvalidRequestException: ... already
+scheduled for deletion` on the next apply, since the name stays reserved
+until the window lapses. Fine for disposable dev secrets; reconsider if
+you ever want a recovery window on a production secret you could delete
+by mistake.
+
+All three paths automatically grant the execution role
+`secretsmanager:GetSecretValue`, scoped to just the ARNs involved — the
+managed `AmazonECSTaskExecutionRolePolicy` alone doesn't include that
+permission, so without it the task fails to start with a
+`ResourceInitializationError` rather than a container crash.
 
 ## Monitoring
 

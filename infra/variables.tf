@@ -161,9 +161,16 @@ variable "backend_container_port" {
   default = 3000
 }
 
+variable "backend_health_check_path" {
+  description = "Path the ALB hits on the backend container for its health check - must match a real route in server.js. Defaults to /healthz."
+  type        = string
+  default     = "/healthz"
+}
+
 variable "frontend_container_port" {
-  type    = number
-  default = 80
+  description = "Port nginx listens on inside the container. The image's nginx.conf uses 8080, not the usual 80 - keep this in sync with that file's `listen` directive."
+  type        = number
+  default     = 8080
 }
 
 variable "backend_desired_count" {
@@ -183,9 +190,58 @@ variable "backend_environment" {
 }
 
 variable "backend_secrets" {
-  description = "Map of env var name -> Secrets Manager/SSM ARN (e.g. Mongo URI) injected into the backend container."
+  description = "Map of env var name -> Secrets Manager ARN, for secrets you're already managing elsewhere. Merged with the auto-created secrets from mongo_uri/backend_secret_values - you don't need to duplicate those keys here."
   type        = map(string)
   default     = {}
+}
+
+variable "mongo_uri" {
+  description = "MongoDB connection string (e.g. Atlas SRV URI). Shorthand for backend_secret_values[\"mongo_uri\"] - equivalent to adding it there, kept separate since every deployment needs it. Injected as env var mongo_uri (lowercase - matches what server.js actually reads, not the usual MONGO_URI convention)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "backend_secret_values" {
+  description = <<-EOT
+    Plaintext secret values Terraform should create a Secrets Manager
+    secret for and inject into the backend task - the map key is BOTH
+    the secret's name suffix and the env var name the container sees.
+    This is the AWS-Secrets-Manager equivalent of what you'd otherwise
+    pass to `kubectl create secret generic backend-secret --from-literal=...`
+    when deploying to Kubernetes - one map, one Terraform-managed secret
+    per key, injected as an env var each:
+
+      backend_secret_values = {
+        ACCESS_TOKEN    = "..."
+        REFRESH_TOKEN   = "..."
+        CLOUD_NAME      = "..."
+        API_KEY         = "..."
+        API_SECRET      = "..."
+        EMAIL_HOST      = "..."
+        EMAIL_PASSWORD  = "..."
+        RAZORPAY_KEY_ID = "..."
+        RAZORPAY_SECRET = "..."
+      }
+
+    Same MONGO_INITDB_ROOT_USERNAME/PASSWORD pattern from the Kubernetes
+    setup doesn't carry over as-is: those existed to bootstrap a
+    self-hosted `mongo-0` StatefulSet's root user on first boot, which
+    doesn't apply once Mongo lives in Atlas (or DocumentDB) - Atlas
+    creates its database user through its own UI/API, not a Kubernetes
+    Secret an init container reads. If you're still self-hosting Mongo
+    (e.g. as a separate ECS service or EC2 instance) rather than using
+    Atlas, put MONGO_INITDB_ROOT_USERNAME/PASSWORD in this map too and
+    wire them into that Mongo container's task definition the same way -
+    ask if you want that added.
+
+    Pass this at apply time (-var or TF_VAR_backend_secret_values as
+    JSON), never in a committed terraform.tfvars - see the Secrets
+    section of the README.
+  EOT
+  type        = map(string)
+  default     = {}
+  sensitive   = true
 }
 
 # ---------------------------------------------------------------------------

@@ -61,7 +61,7 @@ variable "backend_container_port" {
 
 variable "backend_health_check_path" {
   type    = string
-  default = "/api/health"
+  default = "/healthz"
 }
 
 variable "backend_path_pattern" {
@@ -110,8 +110,9 @@ variable "frontend_image_tag" {
 }
 
 variable "frontend_container_port" {
-  type    = number
-  default = 80
+  description = "Port nginx listens on inside the container. The image's nginx.conf uses 8080, not the usual 80 - keep this in sync with that file's `listen` directive."
+  type        = number
+  default     = 8080
 }
 
 variable "frontend_health_check_path" {

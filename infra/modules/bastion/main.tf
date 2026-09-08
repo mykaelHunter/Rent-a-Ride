@@ -206,12 +206,6 @@ resource "aws_instance" "app" {
   key_name               = aws_key_pair.this.key_name
   iam_instance_profile   = var.enable_cw_agent_profile ? aws_iam_instance_profile.app_cwagent[0].name : null
 
-  metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 3
-  }
-
   root_block_device {
     volume_size           = var.app_root_volume_size
     volume_type           = "gp3"
