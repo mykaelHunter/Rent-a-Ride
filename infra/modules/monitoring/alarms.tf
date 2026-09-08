@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
-# Infrastructure alarms — driven by the custom "RentARide/App" namespace
-# the CloudWatch Agent publishes to (see ../cloudwatch-agent/*.json).
-# EC2's default AWS/EC2 namespace has no memory metric, hence the agent.
+# Infrastructure alarms - driven by the custom "RentARide/App" namespace
+# the CloudWatch Agent publishes to on the app host. EC2's default AWS/EC2
+# namespace has no memory metric, hence the agent.
 # ---------------------------------------------------------------------------
 
 variable "cpu_alarm_threshold" {
@@ -23,7 +23,7 @@ variable "disk_alarm_threshold" {
 }
 
 variable "alarm_evaluation_periods" {
-  description = "Number of consecutive periods a threshold breach must persist before the alarm fires — avoids paging on a single noisy datapoint."
+  description = "Number of consecutive periods a threshold breach must persist before the alarm fires - avoids paging on a single noisy datapoint."
   type        = number
   default     = 3
 }
@@ -35,7 +35,7 @@ variable "alarm_period_seconds" {
 }
 
 locals {
-  common_dimensions = { InstanceId = aws_instance.app.id }
+  common_dimensions = { InstanceId = var.app_instance_id }
 }
 
 resource "aws_cloudwatch_metric_alarm" "high_cpu" {
@@ -87,13 +87,13 @@ resource "aws_cloudwatch_metric_alarm" "high_disk" {
 }
 
 # ---------------------------------------------------------------------------
-# Application error alarm — metric filter over the Fluent Bit-shipped app
+# Application error alarm - metric filter over the Fluent Bit-shipped app
 # log group, matching ERROR / Exception / Failed / 5xx status lines, turned
 # into a count metric and alarmed on.
 # ---------------------------------------------------------------------------
 
 variable "app_log_group_name" {
-  description = "Log group Fluent Bit ships rent-a-ride namespace logs to — must match log_group_name in fluent-bit-configmap.yaml."
+  description = "Log group Fluent Bit ships rent-a-ride namespace logs to - must match log_group_name in fluent-bit-configmap.yaml."
   type        = string
   default     = "/rent-a-ride/kubernetes/app"
 }

@@ -5,20 +5,96 @@ aws_region   = "us-east-1"
 project_name = "rent-a-ride"
 environment  = "dev"
 
-vpc_cidr             = "10.0.0.0/16"
-public_subnet_cidr   = "10.0.1.0/24"
-private_subnet_cidr  = "10.0.2.0/24"
+# --- Module toggles ---
+# Turn modules off to apply only what you need. Networking is always
+# created since bastion and ecs both depend on it.
+enable_bastion    = true
+enable_ecr        = true
+enable_ecs        = true
+enable_monitoring = true # requires alert_email + grafana_allowed_cidr below; needs enable_bastion = true
 
+# --- Networking ---
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.11.0/24"]
+private_subnet_cidrs = ["10.0.2.0/24", "10.0.12.0/24"]
+
+# --- Bastion / legacy app host ---
 # IMPORTANT: restrict this to your own IP before applying, e.g. "41.x.x.x/32"
 # (find it with `curl ifconfig.me`). Left at 0.0.0.0/0 only so the stack
 # is usable out of the box.
-allowed_ssh_cidr = "0.0.0.0/0"
-
+allowed_ssh_cidr       = "0.0.0.0/0"
 bastion_instance_type  = "t3.micro"
 private_instance_type  = "t3a.medium"
 app_root_volume_size   = 20
+private_ingress_ports  = [3000, 30080, 30300]
+key_pair_name          = "rent-a-ride-key"
 
-# Ports opened on the private instance, reachable only from within the VPC.
-private_ingress_ports = [3000, 30080, 30300]
+# --- ECR ---
+ecr_repository_names = ["backend", "frontend"]
+ecr_max_image_count  = 10
 
-key_pair_name = "rent-a-ride-key"
+# --- ECS ---
+# Leave blank for HTTP-only on the ALB, or set an ACM cert ARN for HTTPS.
+acm_certificate_arn = ""
+
+# Bump these from CI after each image push, e.g. via
+# `terraform apply -var="backend_image_tag=$GIT_SHA"`
+backend_image_tag  = "latest"
+frontend_image_tag = "latest"
+
+backend_container_port  = 3000
+frontend_container_port = 8080 # matches client/nginx.conf's `listen` directive - not 80
+
+backend_desired_count  = 1
+frontend_desired_count = 1
+
+backend_environment = {
+  NODE_ENV = "production"
+}
+
+# --- Secrets (don't actually set real values in THIS file - it's an
+# example. Pass real ones via -var/-var-file/TF_VAR_* at apply time, not
+# a committed terraform.tfvars. See the Secrets section of the README.) ---
+
+# Mongo connection string. Shorthand for putting mongo_uri in
+# backend_secret_values below - kept separate since every deployment
+# needs it. Injected as env var mongo_uri (lowercase - that's the exact
+# name server.js reads via process.env.mongo_uri, unlike every other
+# secret here which IS uppercase).
+# mongo_uri = "mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/rent-a-ride?retryWrites=true&w=majority"
+
+# Everything else the app needs at runtime - the Secrets Manager
+# equivalent of the kubectl --from-literal= flags from the Kubernetes
+# deployment. One Secrets Manager secret gets created per key here.
+# backend_secret_values = {
+#   ACCESS_TOKEN    = "..."
+#   REFRESH_TOKEN   = "..."
+#   CLOUD_NAME      = "..."
+#   API_KEY         = "..."
+#   API_SECRET      = "..."
+#   EMAIL_HOST      = "..."
+#   EMAIL_PASSWORD  = "..."
+#   RAZORPAY_KEY_ID = "..."
+#   RAZORPAY_SECRET = "..."
+# }
+
+# Only for secrets you're ALREADY managing in Secrets Manager yourself
+# (i.e. Terraform didn't create them) - point this at the ARN instead.
+# Merged with mongo_uri/backend_secret_values, not a replacement for them.
+# backend_secrets = {
+#   SOME_PRE_EXISTING_SECRET = "arn:aws:secretsmanager:us-east-1:123456789012:secret:some-secret"
+# }
+backend_secrets = {}
+
+# --- Monitoring ---
+# Both required when enable_monitoring = true.
+alert_email          = "you@example.com" # must confirm the SNS subscription email before alarms deliver
+grafana_allowed_cidr = "0.0.0.0/0"        # REPLACE with your own IP/32 (curl ifconfig.me) - do not leave open
+
+cpu_alarm_threshold      = 80
+mem_alarm_threshold      = 85
+disk_alarm_threshold     = 85
+alarm_evaluation_periods = 3
+alarm_period_seconds     = 60
+app_log_group_name       = "/rent-a-ride/kubernetes/app"
+error_alarm_threshold    = 5
