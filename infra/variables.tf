@@ -1,3 +1,49 @@
+# ---------------------------------------------------------------------------
+# Module toggles - set to false to skip a module entirely on `terraform
+# apply` / `terraform plan` without touching the code. E.g. to (re)apply
+# only ECR + ECS on top of an already-provisioned network:
+#
+#   terraform apply -var="enable_bastion=false"
+#
+# (networking stays required - both bastion and ecs depend on it). You can
+# also target a single module directly regardless of these toggles, e.g.
+# `terraform apply -target=module.ecr` or `-target=module.ecs`.
+# ---------------------------------------------------------------------------
+
+variable "enable_bastion" {
+  description = "Create the bastion + private app EC2 instances (the pre-ECS kind-on-EC2 setup)."
+  type        = bool
+  default     = true
+}
+
+variable "enable_ecr" {
+  description = "Create the ECR repositories."
+  type        = bool
+  default     = true
+}
+
+variable "enable_ecs" {
+  description = "Create the ECS cluster/ALB/services. Requires ECR image URLs - either from enable_ecr=true or from ecr_repository_urls_override."
+  type        = bool
+  default     = true
+}
+
+variable "enable_monitoring" {
+  description = "Create the monitoring module (CloudWatch alarms, SNS topic, Grafana NLB) for the app EC2 host. Ignored (treated as off) when enable_bastion = false, since there's no app host to monitor."
+  type        = bool
+  default     = true
+}
+
+variable "ecr_repository_urls_override" {
+  description = "Manual map of component -> ECR repo URL, used by the ECS module only when enable_ecr = false (e.g. ECR was applied in a prior run)."
+  type        = map(string)
+  default     = {}
+}
+
+# ---------------------------------------------------------------------------
+# General
+# ---------------------------------------------------------------------------
+
 variable "aws_region" {
   description = "AWS region to provision resources in."
   type        = string
@@ -11,12 +57,14 @@ variable "project_name" {
 }
 
 variable "environment" {
-  description = "Environment name (e.g. dev, staging, prod) - used in tags."
+  description = "Environment name (e.g. dev, staging, prod) - used in tags and resource names."
   type        = string
   default     = "dev"
 }
 
-# --- Networking ---
+# ---------------------------------------------------------------------------
+# Networking
+# ---------------------------------------------------------------------------
 
 variable "vpc_cidr" {
   description = "CIDR block for the VPC."
@@ -24,75 +72,232 @@ variable "vpc_cidr" {
   default     = "10.0.0.0/16"
 }
 
-variable "public_subnet_cidr" {
-  description = "CIDR block for the public subnet (bastion host)."
-  type        = string
-  default     = "10.0.1.0/24"
+variable "public_subnet_cidrs" {
+  description = "CIDR blocks for the public subnets (one per AZ, min 2 - required for the ALB)."
+  type        = list(string)
+  default     = ["10.0.1.0/24", "10.0.11.0/24"]
 }
 
-variable "private_subnet_cidr" {
-  description = "CIDR block for the private subnet (application host)."
-  type        = string
-  default     = "10.0.2.0/24"
+variable "private_subnet_cidrs" {
+  description = "CIDR blocks for the private subnets (one per AZ)."
+  type        = list(string)
+  default     = ["10.0.2.0/24", "10.0.12.0/24"]
 }
 
-# The public and private subnets are deliberately placed in two different
-# AZs (see data.aws_availability_zones in vpc.tf) to satisfy the "two
-# availability zones" requirement. Note this is NOT high availability on
-# its own - there's a single NAT Gateway (lives in the public subnet's AZ)
-# and a single instance per tier, so an AZ outage on the private subnet's
-# side still takes the app instance down. Turning this into a truly HA
-# design would mean a public+private subnet pair per AZ, one NAT Gateway
-# per AZ, and instances/ASGs spread across both pairs.
-
-# --- SSH access ---
+# ---------------------------------------------------------------------------
+# Bastion / legacy app host
+# ---------------------------------------------------------------------------
 
 variable "allowed_ssh_cidr" {
-  description = <<-EOT
-    CIDR block allowed to SSH into the bastion host on port 22.
-    Defaults to 0.0.0.0/0 (open to the internet) purely so `terraform apply`
-    works out of the box - restrict this to your own IP (e.g. "x.x.x.x/32")
-    before using this anywhere beyond a quick test.
-  EOT
+  description = "CIDR block allowed to SSH into the bastion host on port 22. Restrict to your own IP before real use."
   type        = string
   default     = "0.0.0.0/0"
 }
 
-# --- Compute ---
-
 variable "bastion_instance_type" {
-  description = "Instance type for the public bastion host."
-  type        = string
-  default     = "t3.micro"
+  type    = string
+  default = "t3.micro"
 }
 
 variable "private_instance_type" {
-  description = "Instance type for the private application host."
-  type        = string
-  default     = "t3a.medium"
+  type    = string
+  default = "t3a.medium"
 }
 
 variable "app_root_volume_size" {
-  description = "Root EBS volume size (GiB) for the private app instance - kind/Docker images and containers live here."
-  type        = number
-  default     = 20
+  type    = number
+  default = 20
 }
 
 variable "private_ingress_ports" {
-  description = <<-EOT
-    Extra TCP ports (beyond SSH from the bastion) opened on the private
-    instance's security group, reachable only from within the VPC CIDR.
-    Defaults to Rent-a-Ride's backend port (3000) and the kind NodePorts
-    (30080 frontend / 30300 backend) used elsewhere in this project - adjust
-    or empty this list out if the private instance is used for something
-    else.
-  EOT
-  type        = list(number)
-  default     = [3000, 30080, 30300]
+  type    = list(number)
+  default = [3000, 30080, 30300]
 }
 
 variable "key_pair_name" {
-  description = "Name to give the AWS key pair created for these instances."
+  type    = string
+  default = "rent-a-ride-key"
+}
+
+# ---------------------------------------------------------------------------
+# ECR
+# ---------------------------------------------------------------------------
+
+variable "ecr_repository_names" {
+  description = "Component names to create one ECR repo each for."
+  type        = list(string)
+  default     = ["backend", "frontend"]
+}
+
+variable "ecr_max_image_count" {
+  type    = number
+  default = 10
+}
+
+# ---------------------------------------------------------------------------
+# ECS
+# ---------------------------------------------------------------------------
+
+variable "acm_certificate_arn" {
+  description = "ACM cert ARN for HTTPS on the ALB. Leave empty for HTTP-only on port 80."
   type        = string
-  default     = "rent-a-ride-key"
+  default     = ""
+}
+
+variable "backend_image_tag" {
+  description = "Image tag to deploy for the backend service - set this per deploy from CI (git SHA, build number, etc.)."
+  type        = string
+  default     = "latest"
+}
+
+variable "frontend_image_tag" {
+  description = "Image tag to deploy for the frontend service - set this per deploy from CI."
+  type        = string
+  default     = "latest"
+}
+
+variable "backend_container_port" {
+  type    = number
+  default = 3000
+}
+
+variable "backend_health_check_path" {
+  description = "Path the ALB hits on the backend container for its health check - must match a real route in server.js. Defaults to /healthz."
+  type        = string
+  default     = "/healthz"
+}
+
+variable "frontend_container_port" {
+  description = "Port nginx listens on inside the container. The image's nginx.conf uses 8080, not the usual 80 - keep this in sync with that file's `listen` directive."
+  type        = number
+  default     = 8080
+}
+
+variable "backend_desired_count" {
+  type    = number
+  default = 1
+}
+
+variable "frontend_desired_count" {
+  type    = number
+  default = 1
+}
+
+variable "backend_environment" {
+  description = "Plain (non-secret) env vars for the backend container, e.g. { NODE_ENV = \"production\" }."
+  type        = map(string)
+  default     = {}
+}
+
+variable "backend_secrets" {
+  description = "Map of env var name -> Secrets Manager ARN, for secrets you're already managing elsewhere. Merged with the auto-created secrets from mongo_uri/backend_secret_values - you don't need to duplicate those keys here."
+  type        = map(string)
+  default     = {}
+}
+
+variable "mongo_uri" {
+  description = "MongoDB connection string (e.g. Atlas SRV URI). Shorthand for backend_secret_values[\"mongo_uri\"] - equivalent to adding it there, kept separate since every deployment needs it. Injected as env var mongo_uri (lowercase - matches what server.js actually reads, not the usual MONGO_URI convention)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "backend_secret_values" {
+  description = <<-EOT
+    Plaintext secret values Terraform should create a Secrets Manager
+    secret for and inject into the backend task - the map key is BOTH
+    the secret's name suffix and the env var name the container sees.
+    This is the AWS-Secrets-Manager equivalent of what you'd otherwise
+    pass to `kubectl create secret generic backend-secret --from-literal=...`
+    when deploying to Kubernetes - one map, one Terraform-managed secret
+    per key, injected as an env var each:
+
+      backend_secret_values = {
+        ACCESS_TOKEN    = "..."
+        REFRESH_TOKEN   = "..."
+        CLOUD_NAME      = "..."
+        API_KEY         = "..."
+        API_SECRET      = "..."
+        EMAIL_HOST      = "..."
+        EMAIL_PASSWORD  = "..."
+        RAZORPAY_KEY_ID = "..."
+        RAZORPAY_SECRET = "..."
+      }
+
+    Same MONGO_INITDB_ROOT_USERNAME/PASSWORD pattern from the Kubernetes
+    setup doesn't carry over as-is: those existed to bootstrap a
+    self-hosted `mongo-0` StatefulSet's root user on first boot, which
+    doesn't apply once Mongo lives in Atlas (or DocumentDB) - Atlas
+    creates its database user through its own UI/API, not a Kubernetes
+    Secret an init container reads. If you're still self-hosting Mongo
+    (e.g. as a separate ECS service or EC2 instance) rather than using
+    Atlas, put MONGO_INITDB_ROOT_USERNAME/PASSWORD in this map too and
+    wire them into that Mongo container's task definition the same way -
+    ask if you want that added.
+
+    Pass this at apply time (-var or TF_VAR_backend_secret_values as
+    JSON), never in a committed terraform.tfvars - see the Secrets
+    section of the README.
+  EOT
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+}
+
+# ---------------------------------------------------------------------------
+# Monitoring
+# ---------------------------------------------------------------------------
+
+variable "alert_email" {
+  description = "Email address to subscribe to the monitoring SNS topic - you must confirm the AWS subscription email before alarms deliver. Required when enable_monitoring = true."
+  type        = string
+  default     = ""
+}
+
+variable "grafana_allowed_cidr" {
+  description = "CIDR allowed to reach Grafana through the monitoring NLB (e.g. \"41.x.x.x/32\", from `curl ifconfig.me`). Do NOT leave as 0.0.0.0/0 - that exposes Grafana to the public internet. Required when enable_monitoring = true."
+  type        = string
+  default     = ""
+}
+
+variable "cpu_alarm_threshold" {
+  description = "CPU utilization percent (non-idle) above which the high-CPU alarm fires."
+  type        = number
+  default     = 80
+}
+
+variable "mem_alarm_threshold" {
+  description = "Memory used percent above which the high-memory alarm fires."
+  type        = number
+  default     = 85
+}
+
+variable "disk_alarm_threshold" {
+  description = "Root volume used percent above which the disk-space alarm fires."
+  type        = number
+  default     = 85
+}
+
+variable "alarm_evaluation_periods" {
+  description = "Number of consecutive periods a threshold breach must persist before an infra alarm fires."
+  type        = number
+  default     = 3
+}
+
+variable "alarm_period_seconds" {
+  description = "Length of each evaluation period, in seconds. Must match/exceed the CloudWatch Agent's metrics_collection_interval (60s)."
+  type        = number
+  default     = 60
+}
+
+variable "app_log_group_name" {
+  description = "Log group Fluent Bit ships rent-a-ride namespace logs to - must match log_group_name in fluent-bit-configmap.yaml."
+  type        = string
+  default     = "/rent-a-ride/kubernetes/app"
+}
+
+variable "error_alarm_threshold" {
+  description = "Number of matching error log lines within a 5-minute window that trips the application-errors alarm."
+  type        = number
+  default     = 5
 }

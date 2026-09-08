@@ -8,6 +8,7 @@ terraform.tfstate.backup
 # Real variable values
 terraform.tfvars
 *.auto.tfvars
+secrets.tfvars
 
 # Generated SSH private key
 keys/
