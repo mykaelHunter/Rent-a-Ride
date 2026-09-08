@@ -1,5 +1,5 @@
 variable "alert_email" {
-  description = "Email address to subscribe to the monitoring SNS topic. You must click the confirmation link AWS emails to this address before any alarm will actually deliver — an unconfirmed subscription silently drops notifications."
+  description = "Email address to subscribe to the monitoring SNS topic. You must click the confirmation link AWS emails to this address before any alarm will actually deliver - an unconfirmed subscription silently drops notifications."
   type        = string
 }
 
@@ -31,6 +31,6 @@ resource "aws_sns_topic_policy" "alerts" {
 }
 
 output "sns_topic_arn" {
-  description = "ARN of the monitoring SNS topic — reference this from alarms.tf and from the AWS console."
+  description = "ARN of the monitoring SNS topic - reference this from alarms.tf and from the AWS console."
   value       = aws_sns_topic.alerts.arn
 }
