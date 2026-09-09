@@ -59,8 +59,8 @@ storageClass:
 rollout:
   enabled: false
   weights:
-    blue: 100
-    green: 0
+    blue: 0
+    green: 100
 
 mongo:
   # Whether this release owns a mongo StatefulSet/ConfigMap. Set to false
