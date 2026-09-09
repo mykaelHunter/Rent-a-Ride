@@ -200,7 +200,7 @@ frontend:
   name: frontend
   image:
     repository: mykaelhunter/rent-a-ride-client
-    tag: latest@sha256:bd358952c22e22e61a5f99b3d0611e0c7e17a65af4a4ec751dd2503980b956f2
+    tag: latest@sha256:4124576cc8057f3eb95e8e15590cc21af0611e20e0b2d9932e4b638211e9ff3b
     pullPolicy: Always
   replicas: 2
   containerPort: 8080
