@@ -25,6 +25,43 @@ fullnameOverride: ""
 # ---------------------------------------------------------------------------
 # MongoDB (StatefulSet)
 # ---------------------------------------------------------------------------
+# StorageClass the mongo PVC binds against - see templates/storageclass.yaml
+# for why this exists (EKS's default "gp2" class has no working
+# provisioner behind it on recent Kubernetes versions). Set create: false
+# if you're managing this StorageClass outside the chart instead (e.g.
+# already applied cluster-wide and shared by other charts/namespaces).
+storageClass:
+  create: true
+  name: gp3
+  default: true
+  type: gp3
+
+# Blue/green deployment. Off by default - the chart behaves exactly as
+# before (single backend/frontend stack, plain Ingress backends) until
+# this is turned on. Turning it on renders a second ("green") stack from
+# backendGreen/frontendGreen below, and switches the Ingress to weighted
+# target-group actions splitting traffic between blue and green.
+#
+# Rollout is a values change + `helm upgrade` (or an ArgoCD sync, since
+# this repo's Application tracks this chart) - no separate imperative
+# steps:
+#   1. Set backendGreen.image.tag / frontendGreen.image.tag to the new
+#      version, keep weights at {blue: 100, green: 0}, upgrade/sync -
+#      green pods come up and pass health checks with zero live traffic.
+#   2. Shift weights.blue/weights.green (e.g. 90/10, then 50/50, then
+#      0/100) in whatever increments you're comfortable with, upgrading/
+#      syncing at each step.
+#   3. Once green is fully cut over and verified, promote it: copy
+#      backendGreen.image.tag/frontendGreen.image.tag into backend.image.tag/
+#      frontend.image.tag, reset weights to {blue: 100, green: 0}, and
+#      set rollout.enabled back to false - blue is now running the new
+#      version and green's Deployments are torn down until the next rollout.
+rollout:
+  enabled: false
+  weights:
+    blue: 100
+    green: 0
+
 mongo:
   # Whether this release owns a mongo StatefulSet/ConfigMap. Set to false
   # (see environments/values-green.yaml) for a release that shares another
@@ -194,13 +231,26 @@ backend:
         selectPolicy: Min
 
 # ---------------------------------------------------------------------------
+# Backend green stack (blue/green) - only rendered when rollout.enabled.
+# Shares backend's probes/resources/securityContext/service port; only
+# image and replica count are expected to differ day-to-day.
+# ---------------------------------------------------------------------------
+backendGreen:
+  name: backend-green
+  image:
+    repository: mykaelhunter/rent-a-ride-backend
+    tag: latest
+    pullPolicy: Always
+  replicas: 2
+
+# ---------------------------------------------------------------------------
 # Frontend (Deployment + NodePort Service + HPA)
 # ---------------------------------------------------------------------------
 frontend:
   name: frontend
   image:
     repository: mykaelhunter/rent-a-ride-client
-    tag: latest@sha256:4124576cc8057f3eb95e8e15590cc21af0611e20e0b2d9932e4b638211e9ff3b
+    tag: latest@sha256:bd358952c22e22e61a5f99b3d0611e0c7e17a65af4a4ec751dd2503980b956f2
     pullPolicy: Always
   replicas: 2
   containerPort: 8080
@@ -263,7 +313,18 @@ frontend:
         selectPolicy: Min
 
 # ---------------------------------------------------------------------------
-# Ingress (requires the ingress-nginx controller in-cluster)
+# Frontend green stack (blue/green) - only rendered when rollout.enabled.
+# ---------------------------------------------------------------------------
+frontendGreen:
+  name: frontend-green
+  image:
+    repository: mykaelhunter/rent-a-ride-client
+    tag: latest
+    pullPolicy: Always
+  replicas: 2
+
+# ---------------------------------------------------------------------------
+# Ingress (requires the AWS Load Balancer Controller in-cluster)
 # ---------------------------------------------------------------------------
 ingress:
   enabled: true

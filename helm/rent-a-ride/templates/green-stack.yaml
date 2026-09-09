@@ -1,0 +1,158 @@
+{{- if .Values.rollout.enabled }}
+# Parallel "green" stack for blue/green deployments. The existing
+# backend/frontend Deployments+Services (templates/backend-deployment.yaml,
+# templates/frontend-deployment.yaml) are the "blue" stack and are always
+# rendered - this file only adds green alongside them when
+# rollout.enabled = true, so a normal `helm upgrade` with rollout.enabled
+# left false behaves exactly as before.
+#
+# Traffic split between blue and green happens in the Ingress
+# (templates/ingress.yaml), via weighted target-group actions - these
+# Deployments/Services are just the two targets it can point at.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.backendGreen.name }}
+  namespace: {{ include "rent-a-ride.namespace" . }}
+  labels:
+    {{- include "rent-a-ride.labels" . | nindent 4 }}
+    app: {{ .Values.backendGreen.name }}
+spec:
+  replicas: {{ .Values.backendGreen.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.backendGreen.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.backendGreen.name }}
+    spec:
+      containers:
+        - name: {{ .Values.backendGreen.name }}
+          image: "{{ .Values.backendGreen.image.repository }}:{{ .Values.backendGreen.image.tag }}"
+          imagePullPolicy: {{ .Values.backendGreen.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.backend.containerPort }}
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: {{ .Values.backend.secret.name }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.backend.probes.readiness.path }}
+              port: {{ .Values.backend.containerPort }}
+            initialDelaySeconds: {{ .Values.backend.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.backend.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.backend.probes.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.backend.probes.liveness.path }}
+              port: {{ .Values.backend.containerPort }}
+            initialDelaySeconds: {{ .Values.backend.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.backend.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.backend.probes.liveness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.backend.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.backendGreen.name }}
+  namespace: {{ include "rent-a-ride.namespace" . }}
+  labels:
+    {{- include "rent-a-ride.labels" . | nindent 4 }}
+    app: {{ .Values.backendGreen.name }}
+spec:
+  selector:
+    app: {{ .Values.backendGreen.name }}
+  ports:
+    - port: {{ .Values.backend.service.port }}
+      targetPort: {{ .Values.backend.service.targetPort }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.frontendGreen.name }}
+  namespace: {{ include "rent-a-ride.namespace" . }}
+  labels:
+    {{- include "rent-a-ride.labels" . | nindent 4 }}
+    app: {{ .Values.frontendGreen.name }}
+spec:
+  replicas: {{ .Values.frontendGreen.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.frontendGreen.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.frontendGreen.name }}
+    spec:
+      containers:
+        - name: {{ .Values.frontendGreen.name }}
+          image: "{{ .Values.frontendGreen.image.repository }}:{{ .Values.frontendGreen.image.tag }}"
+          imagePullPolicy: {{ .Values.frontendGreen.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.frontend.containerPort }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.frontend.probes.readiness.path }}
+              port: {{ .Values.frontend.containerPort }}
+            initialDelaySeconds: {{ .Values.frontend.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.frontend.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.frontend.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.frontend.probes.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.frontend.probes.liveness.path }}
+              port: {{ .Values.frontend.containerPort }}
+            initialDelaySeconds: {{ .Values.frontend.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.frontend.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.frontend.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.frontend.probes.liveness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.frontend.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+---
+# ClusterIP - unlike the blue frontend Service, green doesn't need its own
+# NodePort; only the Ingress (ALB, target-type ip) ever needs to reach it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.frontendGreen.name }}
+  namespace: {{ include "rent-a-ride.namespace" . }}
+  labels:
+    {{- include "rent-a-ride.labels" . | nindent 4 }}
+    app: {{ .Values.frontendGreen.name }}
+spec:
+  selector:
+    app: {{ .Values.frontendGreen.name }}
+  ports:
+    - port: {{ .Values.frontend.service.port }}
+      targetPort: {{ .Values.frontend.service.targetPort }}
+{{- end }}
