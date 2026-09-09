@@ -1,0 +1,68 @@
+# Requires the AWS Load Balancer Controller addon (provisioned by
+# infra/modules/eks) to already be running in kube-system before this
+# is applied - it's the controller that watches this object and
+# creates/updates the actual ALB, target groups, and listener rules.
+#
+# kubectl apply -f k8s/40-ingress-alb.yaml
+# kubectl get ingress -n rent-a-ride rent-a-ride -w   # ADDRESS column = ALB DNS name, once provisioned
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rent-a-ride
+  namespace: rent-a-ride
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # "ip" registers pod IPs directly with the target group (via the VPC
+    # CNI), instead of "instance" + NodePort like the old script used -
+    # works the same whether pods land on any of the 3 SPOT nodes.
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/healthcheck-port: "3000"
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 3000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 8080
+
+---
+# --- Blue/green scaffold (not active yet) -----------------------------
+#
+# When you're ready to migrate to blue/green: deploy a second set of
+# Deployments/Services (e.g. "backend-green", "frontend-green") alongside
+# the existing ones, then replace the plain `service:` backends above
+# with a weighted `action` annotation instead, e.g. for the frontend path:
+#
+#   alb.ingress.kubernetes.io/actions.frontend-rollout: |
+#     {
+#       "type": "forward",
+#       "forwardConfig": {
+#         "targetGroups": [
+#           {"serviceName": "frontend", "servicePort": "8080", "weight": 100},
+#           {"serviceName": "frontend-green", "servicePort": "8080", "weight": 0}
+#         ]
+#       }
+#     }
+#
+# ...and point the "/" path's backend.service.name at the synthetic
+# "frontend-rollout" service (port "use-annotation") instead of "frontend"
+# directly. Shifting the weight from 100/0 to 0/100 (applied via
+# `kubectl apply` or a CI step) is the whole cutover - the ALB, listener,
+# and DNS name never change, so there's no client-visible interruption.
+# Same pattern applies to the backend path with a "backend-rollout" action.

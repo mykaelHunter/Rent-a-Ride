@@ -18,8 +18,8 @@ infra/
     ├── networking/  # VPC, public/private subnets (2 AZs each), IGW, NAT, routing
     ├── bastion/     # bastion + private app EC2 host (the pre-ECS kind setup)
     ├── monitoring/  # CloudWatch alarms, SNS alerts, Grafana NLB for the app host
-    ├── ecr/         # ECR repositories (backend, frontend) + lifecycle policies
-    └── ecs/         # Fargate cluster, ALB, task defs, services for backend/frontend
+    ├── ecr/         # ECR repositories (backend, frontend) + lifecycle policies - see modules/ecr/README.md
+    └── ecs/         # Fargate cluster, ALB, task defs, services for backend/frontend - see modules/ecs/README.md
 ```
 
 `networking` is the only module every other module depends on, so it's

@@ -153,6 +153,90 @@ resource "aws_secretsmanager_secret_version" "backend" {
   secret_string = local.backend_secret_plaintext[each.value]
 }
 
+# ---------------------------------------------------------------------------
+# EKS - managed Kubernetes cluster + a SPOT-capacity node group, as an
+# alternative worker platform to the ECS path above (not wired to it -
+# ECS and EKS can both be enabled, or either alone).
+# ---------------------------------------------------------------------------
+
+module "eks" {
+  source = "./modules/eks"
+  count  = var.enable_eks ? 1 : 0
+
+  project_name = var.project_name
+  environment  = var.environment
+
+  kubernetes_version = var.eks_kubernetes_version
+
+  vpc_id                    = module.networking.vpc_id
+  control_plane_subnet_ids  = concat(module.networking.public_subnet_ids, module.networking.private_subnet_ids)
+  node_subnet_ids           = module.networking.private_subnet_ids
+
+  endpoint_public_access       = var.eks_endpoint_public_access
+  endpoint_public_access_cidrs = var.eks_endpoint_public_access_cidrs
+
+  capacity_type   = var.eks_capacity_type
+  instance_types  = var.eks_instance_types
+  desired_size    = var.eks_desired_size
+  min_size        = var.eks_min_size
+  max_size        = var.eks_max_size
+
+  # Defaults to the bastion's own security group when the bastion module
+  # is enabled and no explicit override was passed, so node SSH "just
+  # works" via the bastion once eks_ssh_key_pair_name is set - override
+  # with eks_bastion_security_group_id for any other source SG.
+  ssh_key_pair_name = var.eks_ssh_key_pair_name
+  bastion_security_group_id = var.eks_bastion_security_group_id != "" ? var.eks_bastion_security_group_id : (
+    var.enable_bastion ? try(module.bastion[0].bastion_security_group_id, "") : ""
+  )
+
+  lb_controller_install_method = var.eks_lb_controller_install_method
+}
+
+# Helm-based install of the AWS Load Balancer Controller - lives at root
+# because the "helm" provider (configured in provider.tf) can't be set up
+# inside modules/eks, which is invoked with count. Only created when
+# eks_lb_controller_install_method = "helm" (the default - the managed
+# EKS addon type doesn't have a build for every k8s version yet).
+resource "helm_release" "lb_controller" {
+  count = var.enable_eks && var.eks_lb_controller_install_method == "helm" ? 1 : 0
+
+  name       = "aws-load-balancer-controller"
+  namespace  = "kube-system"
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+
+  set {
+    name  = "clusterName"
+    value = module.eks[0].cluster_name
+  }
+
+  set {
+    name  = "serviceAccount.create"
+    value = "true"
+  }
+
+  set {
+    name  = "serviceAccount.name"
+    value = "aws-load-balancer-controller"
+  }
+
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = module.eks[0].lb_controller_role_arn
+  }
+
+  set {
+    name  = "region"
+    value = var.aws_region
+  }
+
+  set {
+    name  = "vpcId"
+    value = module.networking.vpc_id
+  }
+}
+
 module "ecs" {
   source = "./modules/ecs"
   count  = var.enable_ecs ? 1 : 0

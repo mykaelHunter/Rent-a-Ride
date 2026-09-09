@@ -267,16 +267,26 @@ frontend:
 # ---------------------------------------------------------------------------
 ingress:
   enabled: true
-  className: nginx
+  # "alb" is provisioned by the AWS Load Balancer Controller (see
+  # infra/modules/eks) - switched from "nginx" (this chart's original
+  # kind/EC2 target ran ingress-nginx) since EKS doesn't have that
+  # IngressClass installed, and the controller's admission webhook
+  # rejects any Ingress referencing a class that doesn't exist in-cluster.
+  className: alb
   name: rent-a-ride-ingress
   annotations:
-    # No TLS/cert configured for the kind/EC2 setup this chart was
-    # converted from - force plain HTTP so ingress-nginx doesn't
-    # 308-redirect every request to https before a certificate exists.
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
-  # More specific path first for readability - ingress-nginx matches by
-  # path specificity regardless of order, but /api is listed first here
-  # to avoid ambiguity for anyone reading the file top to bottom.
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # "ip" registers pod IPs directly with the target group (via the VPC
+    # CNI) rather than a NodePort on a specific instance - works
+    # regardless of which of the 3 SPOT nodes a pod lands on.
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/healthcheck-port: "3000"
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+  # More specific path first for readability - the ALB controller
+  # matches by path specificity regardless of order, but /api is listed
+  # first here to avoid ambiguity for anyone reading the file top to bottom.
   paths:
     - path: /api
       pathType: Prefix

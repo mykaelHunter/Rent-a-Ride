@@ -54,6 +54,24 @@ output "grafana_url" {
   value = try(module.monitoring[0].grafana_url, null)
 }
 
+# --- EKS (only present when enable_eks = true) ---
+
+output "eks_cluster_name" {
+  value = try(module.eks[0].cluster_name, null)
+}
+
+output "eks_cluster_endpoint" {
+  value = try(module.eks[0].cluster_endpoint, null)
+}
+
+output "eks_node_group_name" {
+  value = try(module.eks[0].node_group_name, null)
+}
+
+output "eks_configure_kubectl" {
+  value = try(module.eks[0].configure_kubectl, null)
+}
+
 # --- ECS (only present when enable_ecs = true) ---
 
 output "alb_dns_name" {

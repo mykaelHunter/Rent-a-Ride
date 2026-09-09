@@ -34,6 +34,12 @@ variable "enable_monitoring" {
   default     = true
 }
 
+variable "enable_eks" {
+  description = "Create the EKS cluster + managed node group, as an alternative to (or alongside) the ECS path."
+  type        = bool
+  default     = false
+}
+
 variable "ecr_repository_urls_override" {
   description = "Manual map of component -> ECR repo URL, used by the ECS module only when enable_ecr = false (e.g. ECR was applied in a prior run)."
   type        = map(string)
@@ -242,6 +248,71 @@ variable "backend_secret_values" {
   type        = map(string)
   default     = {}
   sensitive   = true
+}
+
+# ---------------------------------------------------------------------------
+# EKS
+# ---------------------------------------------------------------------------
+
+variable "eks_kubernetes_version" {
+  type    = string
+  default = "1.36"
+}
+
+variable "eks_endpoint_public_access" {
+  description = "Whether the EKS API server is reachable from outside the VPC (needed for kubectl from a laptop, unless you're going through the bastion/VPN)."
+  type        = bool
+  default     = true
+}
+
+variable "eks_endpoint_public_access_cidrs" {
+  description = "CIDRs allowed to reach the public EKS API endpoint. Restrict to your own IP before real use."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
+variable "eks_capacity_type" {
+  description = "ON_DEMAND or SPOT for the managed node group."
+  type        = string
+  default     = "SPOT"
+}
+
+variable "eks_instance_types" {
+  type    = list(string)
+  default = ["t3a.medium"]
+}
+
+variable "eks_desired_size" {
+  type    = number
+  default = 3
+}
+
+variable "eks_min_size" {
+  type    = number
+  default = 3
+}
+
+variable "eks_max_size" {
+  type    = number
+  default = 3
+}
+
+variable "eks_ssh_key_pair_name" {
+  description = "EC2 key pair for SSH access to EKS nodes. Leave empty (default) to disable node SSH entirely."
+  type        = string
+  default     = ""
+}
+
+variable "eks_bastion_security_group_id" {
+  description = "Security group ID to allow SSH into EKS nodes from. Only used when eks_ssh_key_pair_name is also set. Leave empty to default to the bastion module's own security group (when enable_bastion = true); set explicitly to use a different source SG instead."
+  type        = string
+  default     = ""
+}
+
+variable "eks_lb_controller_install_method" {
+  description = "How to install the AWS Load Balancer Controller: \"addon\" (managed EKS addon) or \"helm\" (upstream chart, installed at root via the helm provider). Default \"helm\" since the addon build lags new k8s versions - switch to \"addon\" once AWS publishes one for your cluster's version."
+  type        = string
+  default     = "helm"
 }
 
 # ---------------------------------------------------------------------------
