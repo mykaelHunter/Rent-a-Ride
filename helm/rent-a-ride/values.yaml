@@ -57,10 +57,10 @@ storageClass:
 #      set rollout.enabled back to false - blue is now running the new
 #      version and green's Deployments are torn down until the next rollout.
 rollout:
-  enabled: true
+  enabled: false
   weights:
-    blue: 0
-    green: 100
+    blue: 100
+    green: 0
 
 mongo:
   # Whether this release owns a mongo StatefulSet/ConfigMap. Set to false
@@ -250,7 +250,7 @@ frontend:
   name: frontend
   image:
     repository: mykaelhunter/rent-a-ride-client
-    tag: latest@sha256:4124576cc8057f3eb95e8e15590cc21af0611e20e0b2d9932e4b638211e9ff3b
+    tag: latest@sha256:bd358952c22e22e61a5f99b3d0611e0c7e17a65af4a4ec751dd2503980b956f2
     pullPolicy: Always
   replicas: 2
   containerPort: 8080
@@ -342,8 +342,13 @@ ingress:
     # regardless of which of the 3 SPOT nodes a pod lands on.
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    # No healthcheck-port override: this annotation applies to every
+    # target group the Ingress creates, not just backend's - hardcoding
+    # it to "3000" broke frontend's health checks (frontend listens on
+    # 8080, so ALB was probing a port nothing was listening on there).
+    # Leaving it unset defaults to "traffic-port", i.e. each target
+    # group checks its own actual port - correct for both.
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
-    alb.ingress.kubernetes.io/healthcheck-port: "3000"
     alb.ingress.kubernetes.io/backend-protocol: HTTP
   # More specific path first for readability - the ALB controller
   # matches by path specificity regardless of order, but /api is listed
