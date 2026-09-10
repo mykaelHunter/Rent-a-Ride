@@ -57,7 +57,7 @@ storageClass:
 #      set rollout.enabled back to false - blue is now running the new
 #      version and green's Deployments are torn down until the next rollout.
 rollout:
-  enabled: true
+  enabled: false
   weights:
     blue: 100
     green: 0

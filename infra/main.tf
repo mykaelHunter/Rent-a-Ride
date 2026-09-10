@@ -206,6 +206,15 @@ resource "helm_release" "lb_controller" {
   repository = "https://aws.github.io/eks-charts"
   chart      = "aws-load-balancer-controller"
 
+  # Right after a fresh cluster/node group comes up, CoreDNS/VPC CNI can
+  # still be settling - the chart's pre-install hook Job (self-signed
+  # webhook cert generation) can take longer than the default 300s to
+  # schedule and run in that window. atomic = true rolls back a failed
+  # install automatically, so a timeout here doesn't leave a half-
+  # installed release blocking the next `terraform apply` retry.
+  timeout = 600
+  atomic  = true
+
   set {
     name  = "clusterName"
     value = module.eks[0].cluster_name
