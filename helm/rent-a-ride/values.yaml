@@ -58,7 +58,6 @@ rollout:
   weights:
     blue: 50
     green: 50
-
 mongo:
   # Whether this release owns a mongo StatefulSet/ConfigMap. Set to false
   # (see environments/values-green.yaml) for a release that shares another
