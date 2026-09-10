@@ -18,10 +18,8 @@ namespace:
   # --create-namespace`).
   create: true
   name: rent-a-ride
-
 nameOverride: ""
 fullnameOverride: ""
-
 # ---------------------------------------------------------------------------
 # MongoDB (StatefulSet)
 # ---------------------------------------------------------------------------
@@ -35,7 +33,6 @@ storageClass:
   name: gp3
   default: true
   type: gp3
-
 # Blue/green deployment. Off by default - the chart behaves exactly as
 # before (single backend/frontend stack, plain Ingress backends) until
 # this is turned on. Turning it on renders a second ("green") stack from
@@ -61,7 +58,6 @@ rollout:
   weights:
     blue: 50
     green: 50
-
 mongo:
   # Whether this release owns a mongo StatefulSet/ConfigMap. Set to false
   # (see environments/values-green.yaml) for a release that shares another
@@ -75,7 +71,6 @@ mongo:
     pullPolicy: IfNotPresent
   replicas: 1
   port: 27017
-
   config:
     database: "rent-a-ride"
     # Left blank by default so the template can derive the standard
@@ -84,7 +79,6 @@ mongo:
     # explicitly to override.
     host: ""
     port: "27017"
-
   secret:
     # If false (default), the chart assumes a Secret named `name` already
     # exists in-cluster with keys MONGO_INITDB_ROOT_USERNAME /
@@ -96,7 +90,6 @@ mongo:
     # mongo.secret.rootPassword=... or a separate untracked values file.
     rootUsername: ""
     rootPassword: ""
-
   probes:
     readiness:
       initialDelaySeconds: 30
@@ -108,7 +101,6 @@ mongo:
       periodSeconds: 20
       timeoutSeconds: 10
       failureThreshold: 3
-
   resources:
     requests:
       cpu: "100m"
@@ -116,15 +108,13 @@ mongo:
     limits:
       cpu: "500m"
       memory: "512Mi"
-
   persistence:
     size: 1Gi
     accessModes:
-      - ReadWriteOnce
+    - ReadWriteOnce
     # Empty = use the cluster's default StorageClass (e.g. kind's
     # rancher local-path-provisioner "standard" class).
     storageClassName: ""
-
 # ---------------------------------------------------------------------------
 # Backend (Deployment + Service + external NodePort Service + HPA)
 # ---------------------------------------------------------------------------
@@ -136,14 +126,12 @@ backend:
     pullPolicy: Always
   replicas: 2
   containerPort: 3000
-
   config:
     port: "3000"
     logLevel: "info"
     # Replace with the real frontend origin (EC2 public IP / domain) before
     # deploying, e.g. "http://203.0.113.10:30080" or "https://app.example.com".
     allowedOrigins: "http://<EC2-PUBLIC-IP>:30080"
-
   secret:
     # If false (default), the chart assumes a Secret named `name` already
     # exists in-cluster with mongo_uri + the app's third-party credentials
@@ -162,7 +150,6 @@ backend:
     #   EMAIL_PASSWORD: ""
     #   RAZORPAY_KEY_ID: ""
     #   RAZORPAY_SECRET: ""
-
   probes:
     readiness:
       path: /healthz
@@ -176,7 +163,6 @@ backend:
       periodSeconds: 30
       timeoutSeconds: 5
       failureThreshold: 3
-
   resources:
     requests:
       cpu: "100m"
@@ -184,17 +170,14 @@ backend:
     limits:
       cpu: "1000m"
       memory: "512Mi"
-
   securityContext:
     allowPrivilegeEscalation: false
     readOnlyRootFilesystem: true
     capabilities:
       drop: ["ALL"]
-
   service:
     port: 3000
     targetPort: 3000
-
   externalService:
     # NodePort for direct/debug access - mirrors k8s/21-backend.yaml's
     # backend-external Service. The frontend does not use this; it talks
@@ -204,7 +187,6 @@ backend:
     port: 3000
     targetPort: 3000
     nodePort: 30300
-
   hpa:
     enabled: true
     minReplicas: 2
@@ -215,21 +197,20 @@ backend:
       scaleUp:
         stabilizationWindowSeconds: 0
         policies:
-          - type: Percent
-            value: 100
-            periodSeconds: 30
-          - type: Pods
-            value: 2
-            periodSeconds: 30
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 2
+          periodSeconds: 30
         selectPolicy: Max
       scaleDown:
         stabilizationWindowSeconds: 300
         policies:
-          - type: Pods
-            value: 1
-            periodSeconds: 60
+        - type: Pods
+          value: 1
+          periodSeconds: 60
         selectPolicy: Min
-
 # ---------------------------------------------------------------------------
 # Backend green stack (blue/green) - only rendered when rollout.enabled.
 # Shares backend's probes/resources/securityContext/service port; only
@@ -239,10 +220,9 @@ backendGreen:
   name: backend-green
   image:
     repository: mykaelhunter/rent-a-ride-backend
-    tag: latest
+    tag: "9"
     pullPolicy: Always
   replicas: 2
-
 # ---------------------------------------------------------------------------
 # Frontend (Deployment + NodePort Service + HPA)
 # ---------------------------------------------------------------------------
@@ -254,7 +234,6 @@ frontend:
     pullPolicy: Always
   replicas: 2
   containerPort: 8080
-
   probes:
     readiness:
       path: /
@@ -268,7 +247,6 @@ frontend:
       periodSeconds: 30
       timeoutSeconds: 5
       failureThreshold: 3
-
   resources:
     requests:
       cpu: "50m"
@@ -276,13 +254,11 @@ frontend:
     limits:
       cpu: "500m"
       memory: "128Mi"
-
   securityContext:
     allowPrivilegeEscalation: false
     readOnlyRootFilesystem: true
     capabilities:
       drop: ["ALL"]
-
   service:
     # NodePort - reachable at http://<EC2-PUBLIC-IP>:30080 (mapped through
     # kind-config.yaml's extraPortMappings on the control-plane node).
@@ -290,7 +266,6 @@ frontend:
     port: 8080
     targetPort: 8080
     nodePort: 30080
-
   hpa:
     enabled: true
     minReplicas: 2
@@ -300,18 +275,17 @@ frontend:
       scaleUp:
         stabilizationWindowSeconds: 0
         policies:
-          - type: Percent
-            value: 100
-            periodSeconds: 30
+        - type: Percent
+          value: 100
+          periodSeconds: 30
         selectPolicy: Max
       scaleDown:
         stabilizationWindowSeconds: 300
         policies:
-          - type: Pods
-            value: 1
-            periodSeconds: 60
+        - type: Pods
+          value: 1
+          periodSeconds: 60
         selectPolicy: Min
-
 # ---------------------------------------------------------------------------
 # Frontend green stack (blue/green) - only rendered when rollout.enabled.
 # ---------------------------------------------------------------------------
@@ -319,10 +293,9 @@ frontendGreen:
   name: frontend-green
   image:
     repository: mykaelhunter/rent-a-ride-client
-    tag: latest
+    tag: "9"
     pullPolicy: Always
   replicas: 2
-
 # ---------------------------------------------------------------------------
 # Ingress (requires the AWS Load Balancer Controller in-cluster)
 # ---------------------------------------------------------------------------
@@ -354,11 +327,11 @@ ingress:
   # matches by path specificity regardless of order, but /api is listed
   # first here to avoid ambiguity for anyone reading the file top to bottom.
   paths:
-    - path: /api
-      pathType: Prefix
-      service: backend
-      port: 3000
-    - path: /
-      pathType: Prefix
-      service: frontend
-      port: 8080
+  - path: /api
+    pathType: Prefix
+    service: backend
+    port: 3000
+  - path: /
+    pathType: Prefix
+    service: frontend
+    port: 8080
