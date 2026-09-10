@@ -1,0 +1,27 @@
+{{- if .Values.storageClass.create }}
+# Requires the AWS Load Balancer Controller's sibling, the EBS CSI driver,
+# to already be running (see infra/modules/eks - aws_eks_addon.ebs_csi) -
+# this StorageClass just tells Kubernetes which provisioner to use; the
+# CSI driver's pods are what actually create/attach the EBS volumes.
+#
+# EKS ships a "gp2" StorageClass by default using the legacy in-tree
+# "kubernetes.io/aws-ebs" provisioner, which has no controller behind it
+# on recent Kubernetes versions - PVCs referencing it (or no class at
+# all, with no other default set) sit Pending forever. This gp3 class
+# uses the CSI provisioner instead and is marked default, so mongo's PVC
+# (which leaves storageClassName unset by default - see values.yaml) picks
+# it up automatically.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.storageClass.name }}
+  labels:
+    {{- include "rent-a-ride.labels" . | nindent 4 }}
+  annotations:
+    storageclass.kubernetes.io/is-default-class: {{ .Values.storageClass.default | quote }}
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  type: {{ .Values.storageClass.type }}
+{{- end }}
