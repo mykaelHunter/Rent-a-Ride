@@ -15,6 +15,8 @@ import {
   clearAdminVehicleToast,
 } from "../../../redux/adminSlices/adminDashboardSlice/StatusSlice";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 function AllVehicles() {
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -29,7 +31,7 @@ function AllVehicles() {
   useEffect(() => {
     const fetchVehicles = async () => {
       try {
-        const res = await fetch("/api/admin/showVehicles", {
+        const res = await fetch(`${BASE_URL}/api/admin/showVehicles`, {
           method: "GET",
         });
         if (res.ok) {
@@ -48,7 +50,7 @@ function AllVehicles() {
   const handleDelete = async (vehicle_id) => {
     try {
       setVehicles(allVehicles.filter((cur) => cur._id !== vehicle_id));
-      const res = await fetch(`/api/admin/deleteVehicle/${vehicle_id}`, {
+      const res = await fetch(`${BASE_URL}/api/admin/deleteVehicle/${vehicle_id}`, {
         method: "DELETE",
       });
       if (res.ok) {

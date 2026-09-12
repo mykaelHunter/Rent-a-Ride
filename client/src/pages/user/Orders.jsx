@@ -11,6 +11,8 @@ import {
   setSingleOrderDetails,
 } from "../../redux/user/userSlice";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 
 
 export default function Orders() {
@@ -20,7 +22,7 @@ export default function Orders() {
 
   const fetchBookings = async () => {
     try {
-      const res = await fetch("/api/user/findBookingsOfUser", {
+      const res = await fetch(`${BASE_URL}/api/user/findBookingsOfUser`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

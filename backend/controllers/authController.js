@@ -22,6 +22,17 @@ export const signUp = async (req, res, next) => {
     await newUser.save();
     res.status(200).json({ message: "newUser added successfully" });
   } catch (error) {
+    // Mongo's duplicate-key error (E11000) on the unique username/email
+    // index is a normal, expected outcome of someone signing up with a
+    // name/email already taken - not a server fault. Without this check
+    // it fell through to the generic 500 handler, leaking Mongo's raw
+    // error message to the client instead of a clean, actionable one.
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern || {})[0] || "field";
+      return next(
+        errorHandler(409, `That ${field} is already taken - try another.`)
+      );
+    }
     next(error);
   }
 };

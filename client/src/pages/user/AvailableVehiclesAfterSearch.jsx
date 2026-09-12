@@ -8,6 +8,8 @@ import { useNavigate } from "react-router-dom";
 import { setVariants } from "../../redux/user/listAllVehicleSlice";
 import { setFilteredData } from "../../redux/user/sortfilterSlice";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 const AvailableVehiclesAfterSearch = () => {
   const { availableCars } = useSelector((state) => state.selectRideSlice);
   const { pickup_district, pickup_location, pickupDate, dropoffDate } =
@@ -24,7 +26,7 @@ const AvailableVehiclesAfterSearch = () => {
         dropOffDate: dropoffDate.humanReadable,
         model,
       };
-      const res = await fetch("/api/user/getVehiclesWithoutBooking", {
+      const res = await fetch(`${BASE_URL}/api/user/getVehiclesWithoutBooking`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

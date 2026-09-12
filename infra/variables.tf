@@ -40,6 +40,12 @@ variable "enable_eks" {
   default     = false
 }
 
+variable "enable_dns_ssl" {
+  description = "Provision the Route53 zone lookup, both ACM certs (app./api. subdomains, split cert-per-region), the CloudFront+S3 frontend, and the app./api. alias records. Requires domain_name and a pre-existing Route53-hosted zone for it, plus enable_ecs = true (api.<domain_name> aliases to the ECS module's ALB)."
+  type        = bool
+  default     = false
+}
+
 variable "ecr_repository_urls_override" {
   description = "Manual map of component -> ECR repo URL, used by the ECS module only when enable_ecr = false (e.g. ECR was applied in a prior run)."
   type        = map(string)
@@ -145,9 +151,54 @@ variable "ecr_max_image_count" {
 # ---------------------------------------------------------------------------
 
 variable "acm_certificate_arn" {
-  description = "ACM cert ARN for HTTPS on the ALB. Leave empty for HTTP-only on port 80."
+  description = "ACM cert ARN for HTTPS on the ALB, used only when enable_dns_ssl = false (that path auto-creates and injects its own api.<domain_name> cert instead). Leave empty for HTTP-only on port 80."
   type        = string
   default     = ""
+}
+
+# ---------------------------------------------------------------------------
+# Domain / ACM / CloudFront+S3 - split-subdomain model:
+#   app.<domain_name>  -> CloudFront -> S3 (frontend)
+#   api.<domain_name>  -> ALB directly (backend, via the ECS module)
+# Two separate ACM certs (each covering just its own subdomain) rather
+# than one cert with SANs, since the CloudFront cert must live in
+# us-east-1 while the ALB cert must live in the ALB's own region.
+# ---------------------------------------------------------------------------
+
+variable "domain_name" {
+  description = "Your Route53-hosted apex domain, e.g. rentaride.example.com. Required when enable_dns_ssl = true."
+  type        = string
+  default     = ""
+}
+
+variable "app_subdomain" {
+  description = "Subdomain the frontend answers on - full hostname is <app_subdomain>.<domain_name>."
+  type        = string
+  default     = "app"
+}
+
+variable "api_subdomain" {
+  description = "Subdomain the backend API answers on - full hostname is <api_subdomain>.<domain_name>."
+  type        = string
+  default     = "api"
+}
+
+variable "frontend_bucket_name" {
+  description = "Globally-unique S3 bucket name for the built React app (client/dist). Required when enable_dns_ssl = true."
+  type        = string
+  default     = ""
+}
+
+variable "cloudfront_price_class" {
+  description = "CloudFront price class - PriceClass_100 (US/Canada/Europe) is cheapest, PriceClass_All is most edge locations."
+  type        = string
+  default     = "PriceClass_100"
+}
+
+variable "enable_ecs_frontend" {
+  description = "Run the frontend as an ECS/nginx service behind the ALB. Set false once app.<domain_name> is served from S3+CloudFront instead - kept as a toggle (not a deletion) so reverting is a one-line change."
+  type        = bool
+  default     = true
 }
 
 variable "backend_image_tag" {

@@ -90,3 +90,37 @@ output "ecs_backend_service_name" {
 output "ecs_frontend_service_name" {
   value = try(module.ecs[0].frontend_service_name, null)
 }
+
+# --- Domain / CloudFront / ACM (only present when enable_dns_ssl = true) ---
+
+output "app_url" {
+  description = "Frontend's public URL once DNS has propagated."
+  value       = var.enable_dns_ssl ? "https://${local.app_fqdn}" : null
+}
+
+output "api_url" {
+  description = "Backend API's public URL once DNS has propagated."
+  value       = var.enable_dns_ssl ? "https://${local.api_fqdn}" : null
+}
+
+output "cloudfront_distribution_id" {
+  description = "Needed for CI cache invalidations after each frontend deploy."
+  value       = try(module.cloudfront_s3[0].distribution_id, null)
+}
+
+output "cloudfront_domain_name" {
+  value = try(module.cloudfront_s3[0].distribution_domain_name, null)
+}
+
+output "frontend_bucket_name" {
+  description = "Sync your client/dist build here, e.g. aws s3 sync client/dist s3://<this>."
+  value       = try(module.cloudfront_s3[0].bucket_name, null)
+}
+
+output "acm_certificate_arn_app" {
+  value = try(module.acm_app[0].certificate_arn, null)
+}
+
+output "acm_certificate_arn_api" {
+  value = try(module.acm_api[0].certificate_arn, null)
+}

@@ -10,6 +10,23 @@ provider "aws" {
   }
 }
 
+# CloudFront + ACM-for-CloudFront are global services that only accept
+# certificates issued in us-east-1, regardless of what region the rest
+# of the stack (ALB, ECS, etc.) runs in. This alias is only exercised
+# when enable_dns_ssl = true.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+
+  default_tags {
+    tags = {
+      Project     = var.project_name
+      Environment = var.environment
+      ManagedBy   = "terraform"
+    }
+  }
+}
+
 # Only ever actually used when enable_eks = true and
 # lb_controller_install_method = "helm" (the default) - the resources
 # that use it are count-gated in main.tf, so this sits inert otherwise.
