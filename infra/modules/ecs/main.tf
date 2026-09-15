@@ -50,7 +50,7 @@ resource "aws_security_group" "alb" {
   }
 
   dynamic "ingress" {
-    for_each = var.acm_certificate_arn == "" ? [] : [1]
+    for_each = var.enable_https ? [1] : []
     content {
       description = "HTTPS"
       from_port   = 443
@@ -159,6 +159,7 @@ resource "aws_lb_target_group" "backend" {
 }
 
 resource "aws_lb_target_group" "frontend" {
+  count       = var.enable_frontend ? 1 : 0
   name        = "${var.project_name}-${var.environment}-frontend-tg"
   port        = var.frontend_container_port
   protocol    = "HTTP"
@@ -179,23 +180,31 @@ resource "aws_lb_target_group" "frontend" {
   }
 }
 
-# Default listener - frontend by default; upgraded to redirect->HTTPS if a
-# certificate ARN is supplied.
+# Default listener target: frontend when it exists (var.enable_frontend),
+# otherwise the backend directly - so with the frontend disabled (served
+# from S3+CloudFront instead) the ALB becomes a plain API endpoint, e.g.
+# behind an api.<domain> alias, with no path-prefix required to reach it.
+locals {
+  default_target_group_arn = var.enable_frontend ? aws_lb_target_group.frontend[0].arn : aws_lb_target_group.backend.arn
+}
+
+# Default listener - upgraded to redirect->HTTPS if a certificate ARN is
+# supplied.
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.this.arn
   port              = 80
   protocol          = "HTTP"
 
   dynamic "default_action" {
-    for_each = var.acm_certificate_arn == "" ? [1] : []
+    for_each = var.enable_https ? [] : [1]
     content {
       type             = "forward"
-      target_group_arn = aws_lb_target_group.frontend.arn
+      target_group_arn = local.default_target_group_arn
     }
   }
 
   dynamic "default_action" {
-    for_each = var.acm_certificate_arn == "" ? [] : [1]
+    for_each = var.enable_https ? [1] : []
     content {
       type = "redirect"
       redirect {
@@ -208,7 +217,7 @@ resource "aws_lb_listener" "http" {
 }
 
 resource "aws_lb_listener" "https" {
-  count             = var.acm_certificate_arn == "" ? 0 : 1
+  count             = var.enable_https ? 1 : 0
   load_balancer_arn = aws_lb.this.arn
   port              = 443
   protocol          = "HTTPS"
@@ -217,7 +226,7 @@ resource "aws_lb_listener" "https" {
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.frontend.arn
+    target_group_arn = local.default_target_group_arn
   }
 }
 
@@ -239,7 +248,7 @@ resource "aws_lb_listener_rule" "backend_http" {
 }
 
 resource "aws_lb_listener_rule" "backend_https" {
-  count        = var.acm_certificate_arn == "" ? 0 : 1
+  count        = var.enable_https ? 1 : 0
   listener_arn = aws_lb_listener.https[0].arn
   priority     = 100
 
@@ -317,6 +326,7 @@ resource "aws_cloudwatch_log_group" "backend" {
 }
 
 resource "aws_cloudwatch_log_group" "frontend" {
+  count             = var.enable_frontend ? 1 : 0
   name              = "/ecs/${var.project_name}-${var.environment}/frontend"
   retention_in_days = var.log_retention_days
 }
@@ -369,6 +379,7 @@ resource "aws_ecs_task_definition" "backend" {
 }
 
 resource "aws_ecs_task_definition" "frontend" {
+  count                    = var.enable_frontend ? 1 : 0
   family                   = "${var.project_name}-${var.environment}-frontend"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -394,7 +405,7 @@ resource "aws_ecs_task_definition" "frontend" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.frontend.name
+          "awslogs-group"         = aws_cloudwatch_log_group.frontend[0].name
           "awslogs-region"        = var.aws_region
           "awslogs-stream-prefix" = "frontend"
         }
@@ -455,9 +466,10 @@ resource "aws_ecs_service" "backend" {
 }
 
 resource "aws_ecs_service" "frontend" {
+  count           = var.enable_frontend ? 1 : 0
   name            = "${var.project_name}-${var.environment}-frontend"
   cluster         = aws_ecs_cluster.this.id
-  task_definition = aws_ecs_task_definition.frontend.arn
+  task_definition = aws_ecs_task_definition.frontend[0].arn
   desired_count   = var.frontend_desired_count
   launch_type     = "FARGATE"
 
@@ -468,7 +480,7 @@ resource "aws_ecs_service" "frontend" {
   }
 
   load_balancer {
-    target_group_arn = aws_lb_target_group.frontend.arn
+    target_group_arn = aws_lb_target_group.frontend[0].arn
     container_name   = "frontend"
     container_port   = var.frontend_container_port
   }

@@ -18,13 +18,46 @@ namespace:
   # --create-namespace`).
   create: true
   name: rent-a-ride
-
 nameOverride: ""
 fullnameOverride: ""
-
 # ---------------------------------------------------------------------------
 # MongoDB (StatefulSet)
 # ---------------------------------------------------------------------------
+# StorageClass the mongo PVC binds against - see templates/storageclass.yaml
+# for why this exists (EKS's default "gp2" class has no working
+# provisioner behind it on recent Kubernetes versions). Set create: false
+# if you're managing this StorageClass outside the chart instead (e.g.
+# already applied cluster-wide and shared by other charts/namespaces).
+storageClass:
+  create: true
+  name: gp3
+  default: true
+  type: gp3
+# Blue/green deployment. Off by default - the chart behaves exactly as
+# before (single backend/frontend stack, plain Ingress backends) until
+# this is turned on. Turning it on renders a second ("green") stack from
+# backendGreen/frontendGreen below, and switches the Ingress to weighted
+# target-group actions splitting traffic between blue and green.
+#
+# Rollout is a values change + `helm upgrade` (or an ArgoCD sync, since
+# this repo's Application tracks this chart) - no separate imperative
+# steps:
+#   1. Set backendGreen.image.tag / frontendGreen.image.tag to the new
+#      version, keep weights at {blue: 100, green: 0}, upgrade/sync -
+#      green pods come up and pass health checks with zero live traffic.
+#   2. Shift weights.blue/weights.green (e.g. 90/10, then 50/50, then
+#      0/100) in whatever increments you're comfortable with, upgrading/
+#      syncing at each step.
+#   3. Once green is fully cut over and verified, promote it: copy
+#      backendGreen.image.tag/frontendGreen.image.tag into backend.image.tag/
+#      frontend.image.tag, reset weights to {blue: 100, green: 0}, and
+#      set rollout.enabled back to false - blue is now running the new
+#      version and green's Deployments are torn down until the next rollout.
+rollout:
+  enabled: true
+  weights:
+    blue: 0
+    green: 100
 mongo:
   # Whether this release owns a mongo StatefulSet/ConfigMap. Set to false
   # (see environments/values-green.yaml) for a release that shares another
@@ -38,7 +71,6 @@ mongo:
     pullPolicy: IfNotPresent
   replicas: 1
   port: 27017
-
   config:
     database: "rent-a-ride"
     # Left blank by default so the template can derive the standard
@@ -47,7 +79,6 @@ mongo:
     # explicitly to override.
     host: ""
     port: "27017"
-
   secret:
     # If false (default), the chart assumes a Secret named `name` already
     # exists in-cluster with keys MONGO_INITDB_ROOT_USERNAME /
@@ -59,7 +90,6 @@ mongo:
     # mongo.secret.rootPassword=... or a separate untracked values file.
     rootUsername: ""
     rootPassword: ""
-
   probes:
     readiness:
       initialDelaySeconds: 30
@@ -71,7 +101,6 @@ mongo:
       periodSeconds: 20
       timeoutSeconds: 10
       failureThreshold: 3
-
   resources:
     requests:
       cpu: "100m"
@@ -79,15 +108,13 @@ mongo:
     limits:
       cpu: "500m"
       memory: "512Mi"
-
   persistence:
     size: 1Gi
     accessModes:
-      - ReadWriteOnce
+    - ReadWriteOnce
     # Empty = use the cluster's default StorageClass (e.g. kind's
     # rancher local-path-provisioner "standard" class).
     storageClassName: ""
-
 # ---------------------------------------------------------------------------
 # Backend (Deployment + Service + external NodePort Service + HPA)
 # ---------------------------------------------------------------------------
@@ -99,14 +126,12 @@ backend:
     pullPolicy: Always
   replicas: 2
   containerPort: 3000
-
   config:
     port: "3000"
     logLevel: "info"
     # Replace with the real frontend origin (EC2 public IP / domain) before
     # deploying, e.g. "http://203.0.113.10:30080" or "https://app.example.com".
     allowedOrigins: "http://<EC2-PUBLIC-IP>:30080"
-
   secret:
     # If false (default), the chart assumes a Secret named `name` already
     # exists in-cluster with mongo_uri + the app's third-party credentials
@@ -125,7 +150,6 @@ backend:
     #   EMAIL_PASSWORD: ""
     #   RAZORPAY_KEY_ID: ""
     #   RAZORPAY_SECRET: ""
-
   probes:
     readiness:
       path: /healthz
@@ -139,7 +163,6 @@ backend:
       periodSeconds: 30
       timeoutSeconds: 5
       failureThreshold: 3
-
   resources:
     requests:
       cpu: "100m"
@@ -147,17 +170,14 @@ backend:
     limits:
       cpu: "1000m"
       memory: "512Mi"
-
   securityContext:
     allowPrivilegeEscalation: false
     readOnlyRootFilesystem: true
     capabilities:
       drop: ["ALL"]
-
   service:
     port: 3000
     targetPort: 3000
-
   externalService:
     # NodePort for direct/debug access - mirrors k8s/21-backend.yaml's
     # backend-external Service. The frontend does not use this; it talks
@@ -167,7 +187,6 @@ backend:
     port: 3000
     targetPort: 3000
     nodePort: 30300
-
   hpa:
     enabled: true
     minReplicas: 2
@@ -178,21 +197,32 @@ backend:
       scaleUp:
         stabilizationWindowSeconds: 0
         policies:
-          - type: Percent
-            value: 100
-            periodSeconds: 30
-          - type: Pods
-            value: 2
-            periodSeconds: 30
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 2
+          periodSeconds: 30
         selectPolicy: Max
       scaleDown:
         stabilizationWindowSeconds: 300
         policies:
-          - type: Pods
-            value: 1
-            periodSeconds: 60
+        - type: Pods
+          value: 1
+          periodSeconds: 60
         selectPolicy: Min
-
+# ---------------------------------------------------------------------------
+# Backend green stack (blue/green) - only rendered when rollout.enabled.
+# Shares backend's probes/resources/securityContext/service port; only
+# image and replica count are expected to differ day-to-day.
+# ---------------------------------------------------------------------------
+backendGreen:
+  name: backend-green
+  image:
+    repository: mykaelhunter/rent-a-ride-backend
+    tag: "9"
+    pullPolicy: Always
+  replicas: 2
 # ---------------------------------------------------------------------------
 # Frontend (Deployment + NodePort Service + HPA)
 # ---------------------------------------------------------------------------
@@ -204,7 +234,6 @@ frontend:
     pullPolicy: Always
   replicas: 2
   containerPort: 8080
-
   probes:
     readiness:
       path: /
@@ -218,7 +247,6 @@ frontend:
       periodSeconds: 30
       timeoutSeconds: 5
       failureThreshold: 3
-
   resources:
     requests:
       cpu: "50m"
@@ -226,13 +254,11 @@ frontend:
     limits:
       cpu: "500m"
       memory: "128Mi"
-
   securityContext:
     allowPrivilegeEscalation: false
     readOnlyRootFilesystem: true
     capabilities:
       drop: ["ALL"]
-
   service:
     # NodePort - reachable at http://<EC2-PUBLIC-IP>:30080 (mapped through
     # kind-config.yaml's extraPortMappings on the control-plane node).
@@ -240,7 +266,6 @@ frontend:
     port: 8080
     targetPort: 8080
     nodePort: 30080
-
   hpa:
     enabled: true
     minReplicas: 2
@@ -250,39 +275,63 @@ frontend:
       scaleUp:
         stabilizationWindowSeconds: 0
         policies:
-          - type: Percent
-            value: 100
-            periodSeconds: 30
+        - type: Percent
+          value: 100
+          periodSeconds: 30
         selectPolicy: Max
       scaleDown:
         stabilizationWindowSeconds: 300
         policies:
-          - type: Pods
-            value: 1
-            periodSeconds: 60
+        - type: Pods
+          value: 1
+          periodSeconds: 60
         selectPolicy: Min
-
 # ---------------------------------------------------------------------------
-# Ingress (requires the ingress-nginx controller in-cluster)
+# Frontend green stack (blue/green) - only rendered when rollout.enabled.
+# ---------------------------------------------------------------------------
+frontendGreen:
+  name: frontend-green
+  image:
+    repository: mykaelhunter/rent-a-ride-client
+    tag: "9"
+    pullPolicy: Always
+  replicas: 2
+# ---------------------------------------------------------------------------
+# Ingress (requires the AWS Load Balancer Controller in-cluster)
 # ---------------------------------------------------------------------------
 ingress:
   enabled: true
-  className: nginx
+  # "alb" is provisioned by the AWS Load Balancer Controller (see
+  # infra/modules/eks) - switched from "nginx" (this chart's original
+  # kind/EC2 target ran ingress-nginx) since EKS doesn't have that
+  # IngressClass installed, and the controller's admission webhook
+  # rejects any Ingress referencing a class that doesn't exist in-cluster.
+  className: alb
   name: rent-a-ride-ingress
   annotations:
-    # No TLS/cert configured for the kind/EC2 setup this chart was
-    # converted from - force plain HTTP so ingress-nginx doesn't
-    # 308-redirect every request to https before a certificate exists.
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
-  # More specific path first for readability - ingress-nginx matches by
-  # path specificity regardless of order, but /api is listed first here
-  # to avoid ambiguity for anyone reading the file top to bottom.
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # "ip" registers pod IPs directly with the target group (via the VPC
+    # CNI) rather than a NodePort on a specific instance - works
+    # regardless of which of the 3 SPOT nodes a pod lands on.
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    # No healthcheck-port override: this annotation applies to every
+    # target group the Ingress creates, not just backend's - hardcoding
+    # it to "3000" broke frontend's health checks (frontend listens on
+    # 8080, so ALB was probing a port nothing was listening on there).
+    # Leaving it unset defaults to "traffic-port", i.e. each target
+    # group checks its own actual port - correct for both.
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+  # More specific path first for readability - the ALB controller
+  # matches by path specificity regardless of order, but /api is listed
+  # first here to avoid ambiguity for anyone reading the file top to bottom.
   paths:
-    - path: /api
-      pathType: Prefix
-      service: backend
-      port: 3000
-    - path: /
-      pathType: Prefix
-      service: frontend
-      port: 8080
+  - path: /api
+    pathType: Prefix
+    service: backend
+    port: 3000
+  - path: /
+    pathType: Prefix
+    service: frontend
+    port: 8080

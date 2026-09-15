@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import { DataGrid } from "@mui/x-data-grid";
 import Box from "@mui/material/Box";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 const BookingsTable = () => {
   const [bookings, setBookings] = useState([]);
 
 
   const fetchBookings = async () => {
     try {
-      const res = await fetch("/api/admin/allBookings", {
+      const res = await fetch(`${BASE_URL}/api/admin/allBookings`, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -30,7 +32,7 @@ const BookingsTable = () => {
 
     const changeVehicleStatus = async () => {
       try {
-        const isStatusChanged = await fetch("/api/admin/changeStatus", {
+        const isStatusChanged = await fetch(`${BASE_URL}/api/admin/changeStatus`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

@@ -8,6 +8,8 @@ import VendorBookingDetailModal from "./VendorBookingModal";
 import { IoIosArrowDown } from "react-icons/io";
 import { setVendorOrderModalOpen, setVendorSingleOrderDetails } from "../../../redux/vendor/vendorBookingSlice";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 
 const VendorBookingsTable = () => {
   const [bookings, setBookings] = useState("");
@@ -28,7 +30,7 @@ const VendorBookingsTable = () => {
 
   const fetchData = async () => {
     try {
-      const res = await fetch("/api/vendor/showVendorVehilces", {
+      const res = await fetch(`${BASE_URL}/api/vendor/showVendorVehilces`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -69,7 +71,7 @@ const VendorBookingsTable = () => {
   // fetching all bookings
   const fetchBookings = async () => {
     try {
-      const res = await fetch("/api/admin/allBookings", {
+      const res = await fetch(`${BASE_URL}/api/admin/allBookings`, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -91,7 +93,7 @@ const VendorBookingsTable = () => {
 
     const changeVehicleStatus = async () => {
       try {
-        const isStatusChanged = await fetch("/api/admin/changeStatus", {
+        const isStatusChanged = await fetch(`${BASE_URL}/api/admin/changeStatus`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

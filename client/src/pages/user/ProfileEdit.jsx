@@ -9,6 +9,8 @@ import { useDispatch, useSelector } from "react-redux";
 import { editUserProfile, setUpdated } from "../../redux/user/userSlice";
 import { useForm } from "react-hook-form";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 const ProfileEdit = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const { username, email, phoneNumber, adress, _id } = useSelector(
@@ -23,7 +25,7 @@ const ProfileEdit = () => {
       if (data) {
         const formData = data;
         dispatch(editUserProfile({ ...formData }));
-        await fetch(`/api/user/editUserProfile/${id}`, {
+        await fetch(`${BASE_URL}/api/user/editUserProfile/${id}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

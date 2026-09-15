@@ -8,6 +8,8 @@ import { useDispatch, useSelector } from "react-redux";
 import { signOut } from "../../../redux/user/userSlice.jsx";
 import { showSidebarOrNot } from "../../../redux/adminSlices/adminDashboardSlice/DashboardSlice.jsx";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 const SideBar = () => {
   const { activeMenu, screenSize } = useSelector(
     (state) => state.adminDashboardSlice
@@ -24,7 +26,7 @@ const SideBar = () => {
 
   //SignOut
   const handleSignout = async () => {
-    const res = await fetch("/api/admin/signout", {
+    const res = await fetch(`${BASE_URL}/api/admin/signout`, {
       method: "GET",
     });
     const data = await res.json();

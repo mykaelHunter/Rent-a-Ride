@@ -20,6 +20,8 @@ import { GrStatusGood } from "react-icons/gr";
 import { MdOutlinePending } from "react-icons/md";
 import VendorHeader from "../Components/VendorHeader";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 
 const VendorAllVehicles = () => {
   const navigate = useNavigate();
@@ -34,7 +36,7 @@ const VendorAllVehicles = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const res = await fetch("/api/vendor/showVendorVehilces", {
+        const res = await fetch(`${BASE_URL}/api/vendor/showVendorVehilces`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
