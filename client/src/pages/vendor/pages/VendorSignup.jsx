@@ -6,6 +6,8 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 const schema = z.object({
   username: z.string().min(3, { message: "minimum 3 characters required" }),
   email: z
@@ -32,7 +34,7 @@ function VendorSignup() {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await fetch("/api/vendor/vendorsignup", {
+      const res = await fetch(`${BASE_URL}/api/vendor/vendorsignup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData),

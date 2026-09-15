@@ -153,6 +153,99 @@ resource "aws_secretsmanager_secret_version" "backend" {
   secret_string = local.backend_secret_plaintext[each.value]
 }
 
+# ---------------------------------------------------------------------------
+# EKS - managed Kubernetes cluster + a SPOT-capacity node group, as an
+# alternative worker platform to the ECS path above (not wired to it -
+# ECS and EKS can both be enabled, or either alone).
+# ---------------------------------------------------------------------------
+
+module "eks" {
+  source = "./modules/eks"
+  count  = var.enable_eks ? 1 : 0
+
+  project_name = var.project_name
+  environment  = var.environment
+
+  kubernetes_version = var.eks_kubernetes_version
+
+  vpc_id                    = module.networking.vpc_id
+  control_plane_subnet_ids  = concat(module.networking.public_subnet_ids, module.networking.private_subnet_ids)
+  node_subnet_ids           = module.networking.private_subnet_ids
+
+  endpoint_public_access       = var.eks_endpoint_public_access
+  endpoint_public_access_cidrs = var.eks_endpoint_public_access_cidrs
+
+  capacity_type   = var.eks_capacity_type
+  instance_types  = var.eks_instance_types
+  desired_size    = var.eks_desired_size
+  min_size        = var.eks_min_size
+  max_size        = var.eks_max_size
+
+  # Defaults to the bastion's own security group when the bastion module
+  # is enabled and no explicit override was passed, so node SSH "just
+  # works" via the bastion once eks_ssh_key_pair_name is set - override
+  # with eks_bastion_security_group_id for any other source SG.
+  ssh_key_pair_name = var.eks_ssh_key_pair_name
+  bastion_security_group_id = var.eks_bastion_security_group_id != "" ? var.eks_bastion_security_group_id : (
+    var.enable_bastion ? try(module.bastion[0].bastion_security_group_id, "") : ""
+  )
+
+  lb_controller_install_method = var.eks_lb_controller_install_method
+}
+
+# Helm-based install of the AWS Load Balancer Controller - lives at root
+# because the "helm" provider (configured in provider.tf) can't be set up
+# inside modules/eks, which is invoked with count. Only created when
+# eks_lb_controller_install_method = "helm" (the default - the managed
+# EKS addon type doesn't have a build for every k8s version yet).
+resource "helm_release" "lb_controller" {
+  count = var.enable_eks && var.eks_lb_controller_install_method == "helm" ? 1 : 0
+
+  name       = "aws-load-balancer-controller"
+  namespace  = "kube-system"
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+
+  # Right after a fresh cluster/node group comes up, CoreDNS/VPC CNI can
+  # still be settling - the chart's pre-install hook Job (self-signed
+  # webhook cert generation) can take longer than the default 300s to
+  # schedule and run in that window. atomic = true rolls back a failed
+  # install automatically, so a timeout here doesn't leave a half-
+  # installed release blocking the next `terraform apply` retry.
+  timeout = 600
+  atomic  = true
+
+  set {
+    name  = "clusterName"
+    value = module.eks[0].cluster_name
+  }
+
+  set {
+    name  = "serviceAccount.create"
+    value = "true"
+  }
+
+  set {
+    name  = "serviceAccount.name"
+    value = "aws-load-balancer-controller"
+  }
+
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = module.eks[0].lb_controller_role_arn
+  }
+
+  set {
+    name  = "region"
+    value = var.aws_region
+  }
+
+  set {
+    name  = "vpcId"
+    value = module.networking.vpc_id
+  }
+}
+
 module "ecs" {
   source = "./modules/ecs"
   count  = var.enable_ecs ? 1 : 0
@@ -165,7 +258,9 @@ module "ecs" {
   public_subnet_ids   = module.networking.public_subnet_ids
   private_subnet_ids  = module.networking.private_subnet_ids
 
-  acm_certificate_arn = var.acm_certificate_arn
+  acm_certificate_arn = var.enable_dns_ssl ? module.acm_api[0].certificate_arn : var.acm_certificate_arn
+  enable_https        = var.enable_dns_ssl || var.acm_certificate_arn != ""
+  enable_frontend     = var.enable_ecs_frontend
 
   backend_image_url       = local.ecr_repository_urls["backend"]
   backend_image_tag       = var.backend_image_tag
@@ -179,4 +274,78 @@ module "ecs" {
   frontend_image_tag      = var.frontend_image_tag
   frontend_container_port = var.frontend_container_port
   frontend_desired_count  = var.frontend_desired_count
+}
+
+# ---------------------------------------------------------------------------
+# Domain + TLS + CDN, split-subdomain model:
+#   app.<domain_name> -> ACM cert (us-east-1) -> CloudFront -> S3 (frontend)
+#   api.<domain_name> -> ACM cert (aws_region) -> ALB directly (backend)
+#
+# Two certs because CloudFront only accepts a cert from us-east-1 while an
+# ALB listener needs one in its own region - a single cert can't satisfy
+# both unless aws_region is already us-east-1.
+#
+# Needs enable_ecs = true (for the ALB) as well as enable_dns_ssl = true.
+# The ECS frontend service is independently toggled off via
+# enable_ecs_frontend, so this can be turned on before or after that.
+# ---------------------------------------------------------------------------
+
+locals {
+  app_fqdn = var.enable_dns_ssl ? "${var.app_subdomain}.${var.domain_name}" : ""
+  api_fqdn = var.enable_dns_ssl ? "${var.api_subdomain}.${var.domain_name}" : ""
+}
+
+data "aws_route53_zone" "lookup" {
+  count        = var.enable_dns_ssl ? 1 : 0
+  name         = var.domain_name
+  private_zone = false
+}
+
+module "acm_app" {
+  source = "./modules/acm"
+  count  = var.enable_dns_ssl ? 1 : 0
+
+  providers = {
+    aws = aws.us_east_1
+  }
+
+  domain_name     = local.app_fqdn
+  route53_zone_id = data.aws_route53_zone.lookup[0].zone_id
+}
+
+module "acm_api" {
+  source = "./modules/acm"
+  count  = var.enable_dns_ssl ? 1 : 0
+
+  # Default (regional) provider - must match the ALB's own region, not
+  # necessarily us-east-1.
+  domain_name     = local.api_fqdn
+  route53_zone_id = data.aws_route53_zone.lookup[0].zone_id
+}
+
+module "cloudfront_s3" {
+  source = "./modules/cloudfront-s3"
+  count  = var.enable_dns_ssl ? 1 : 0
+
+  project_name        = var.project_name
+  environment         = var.environment
+  bucket_name         = var.frontend_bucket_name
+  acm_certificate_arn = module.acm_app[0].certificate_arn
+  aliases             = [local.app_fqdn]
+  price_class         = var.cloudfront_price_class
+}
+
+module "route53" {
+  source = "./modules/route53"
+  count  = var.enable_dns_ssl ? 1 : 0
+
+  zone_id = data.aws_route53_zone.lookup[0].zone_id
+
+  app_fqdn                  = local.app_fqdn
+  cloudfront_domain_name    = module.cloudfront_s3[0].distribution_domain_name
+  cloudfront_hosted_zone_id = module.cloudfront_s3[0].distribution_hosted_zone_id
+
+  api_fqdn     = local.api_fqdn
+  alb_dns_name = module.ecs[0].alb_dns_name
+  alb_zone_id  = module.ecs[0].alb_zone_id
 }

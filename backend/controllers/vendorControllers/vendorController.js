@@ -19,6 +19,14 @@ export const vendorSignup = async (req, res, next) => {
     await user.save();
     res.status(200).json({ message: "vendor created successfully" });
   } catch (error) {
+    // Same E11000 handling as authController.signUp - a taken
+    // username/email is an expected user error, not a server fault.
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern || {})[0] || "field";
+      return next(
+        errorHandler(409, `That ${field} is already taken - try another.`)
+      );
+    }
     next(error);
   }
 };

@@ -23,6 +23,8 @@ import { LocalizationProvider } from "@mui/x-date-pickers";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 
 const VendorAddProductModal = () => {
   const { register, handleSubmit, reset, control } = useForm();
@@ -75,7 +77,7 @@ const VendorAddProductModal = () => {
         tostID = toast.loading("saving...", { position: "bottom-center" });
       }
 
-      const res = await fetch("/api/vendor/vendorAddVehicle", {
+      const res = await fetch(`${BASE_URL}/api/vendor/vendorAddVehicle`, {
         method: "POST",
         body: formData,
       });

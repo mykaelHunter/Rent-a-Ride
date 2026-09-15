@@ -15,6 +15,8 @@ import { displayRazorpay } from "./Razorpay";
 import { setPageLoading } from "../../redux/user/userSlice";
 import { setisPaymentDone } from "../../redux/user/LatestBookingsSlice";
 import {toast, Toaster} from "sonner";
+
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
 // import { toast, Toaster } from "sonner";
 
 export async function sendBookingDetailsEmail(
@@ -23,7 +25,7 @@ export async function sendBookingDetailsEmail(
   dispatch
 ) {
   try {
-    const sendEamil = await fetch("/api/user/sendBookingDetailsEamil", {
+    const sendEamil = await fetch(`${BASE_URL}/api/user/sendBookingDetailsEamil`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

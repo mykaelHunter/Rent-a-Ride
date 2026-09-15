@@ -18,6 +18,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { FaIndianRupeeSign } from "react-icons/fa6";
 import { useEffect } from "react";
 import { showVehicles } from "../../redux/user/listAllVehicleSlice";
+
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
 // import { signOut } from "../../redux/user/userSlice";
 
 const VehicleDetails = () => {
@@ -33,7 +35,7 @@ const VehicleDetails = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const res = await fetch("/api/user/listAllVehicles", {
+        const res = await fetch(`${BASE_URL}/api/user/listAllVehicles`, {
           headers: { "Authorization": `Bearer ${refreshToken},${accessToken}` },
         });
         if (!res.ok) {

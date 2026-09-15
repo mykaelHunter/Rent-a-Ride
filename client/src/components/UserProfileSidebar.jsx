@@ -13,6 +13,8 @@ import { links } from "./UserSidebarContent";
 import { showSidebarOrNot } from "../redux/adminSlices/adminDashboardSlice/DashboardSlice";
 import { CiLogout } from "react-icons/ci";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 
 const UserProfileSidebar = () => {
   const { activeMenu, screenSize } = useSelector(
@@ -34,7 +36,7 @@ const UserProfileSidebar = () => {
 
   //SignOut
   const handleSignout = async () => {
-    const res = await fetch("/api/admin/signout", {
+    const res = await fetch(`${BASE_URL}/api/admin/signout`, {
       method: "GET",
       credentials:'include'
     });
@@ -48,7 +50,7 @@ const UserProfileSidebar = () => {
   const handleDelete = async () => {
     try {
       dispatch(deleteUserStart());
-      const res = await fetch(`/api/user/delete/${currentUser._id}`, {
+      const res = await fetch(`${BASE_URL}/api/user/delete/${currentUser._id}`, {
         method: "DELETE",
       });
       const data = await res.json();

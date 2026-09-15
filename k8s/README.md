@@ -169,13 +169,25 @@ one-time setup.
 
 ### 8. Install the Ingress controller (optional — single-entry-point routing)
 
+> **This section is for the local `kind` cluster only.** If you're on EKS,
+> skip this entirely - the Helm chart (`helm/rent-a-ride`) creates its own
+> Ingress backed by the AWS Load Balancer Controller (see
+> `infra/modules/eks`), and installing `ingress-nginx` alongside it will
+> actively break things: its cluster-wide admission webhook intercepts
+> *every* Ingress write, including the ALB one, and fails once the
+> `ingress-nginx` controller pod isn't there to answer it (a
+> "no endpoints available" webhook error on `argocd app sync` or
+> `kubectl apply` is the exact symptom). If you've already installed it on
+> an EKS cluster by mistake: `helm uninstall <release> -n ingress-nginx`
+> (check the release/namespace with `helm list -A | grep nginx` first).
+
 `41-ingress.yaml` is already applied by step 4, but like the HPAs it does
-nothing until the actual nginx **Ingress controller** is installed — an
+nothing until the actual nginx **Ingress controller** is installed - an
 Ingress *resource* just declares routing rules; something has to exist
 in-cluster to read and act on them. See
 [Ingress](#ingress-nginx-ingress-controller) below for the one-time setup.
 
-## Ingress (nginx Ingress controller)
+## Ingress (nginx Ingress controller, kind only - see warning above)
 
 `41-ingress.yaml` routes all traffic through a single entry point instead
 of the two separate NodePorts used so far:

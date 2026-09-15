@@ -1,3 +1,8 @@
+output "bastion_security_group_id" {
+  description = "Security group attached to the bastion instance - allow-list this to grant another resource (e.g. an EKS node group) SSH access via the bastion."
+  value       = aws_security_group.bastion.id
+}
+
 output "app_instance_id" {
   description = "ID of the app host - used by the monitoring module for alarm dimensions and the Grafana NLB target."
   value       = aws_instance.app.id

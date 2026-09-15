@@ -15,6 +15,8 @@ import dayjs from "dayjs";
 import toast from "react-hot-toast";
 import { setadminEditVehicleSuccess } from "../../../redux/adminSlices/adminDashboardSlice/StatusSlice";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 export default function EditProductComponent() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -53,7 +55,7 @@ export default function EditProductComponent() {
         tostID = toast.loading("saving...", { position: "bottom-center" });
         const formData = editData;
         dispatch(setEditData({ _id: vehicle_id, ...formData }));
-        const res = await fetch(`/api/admin/editVehicle/${vehicle_id}`, {
+        const res = await fetch(`${BASE_URL}/api/admin/editVehicle/${vehicle_id}`, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
