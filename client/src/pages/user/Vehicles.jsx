@@ -15,10 +15,12 @@ import { signOut } from "../../redux/user/userSlice";
 import Footers from "../../components/Footer";
 import SkeletonLoader from "../../components/ui/SkeletonLoader";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 //use Custome hook in this case :)
 export const onVehicleDetail = async (id, dispatch, navigate) => {
   try {
-    const res = await fetch("/api/user/showVehicleDetails", {
+    const res = await fetch(`${BASE_URL}/api/user/showVehicleDetails`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -51,7 +53,6 @@ const Vehicles = () => {
   const navigate = useNavigate();
   const [isLoading , setIsLoading] = useState(true)
 
-  const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL
   //allVariants are set to null when we enter AllVehicles from navbar
 
   let refreshToken = localStorage.getItem('refreshToken')

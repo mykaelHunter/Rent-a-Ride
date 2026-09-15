@@ -12,6 +12,7 @@ enable_bastion    = true
 enable_ecr        = true
 enable_ecs        = true
 enable_monitoring = true # requires alert_email + grafana_allowed_cidr below; needs enable_bastion = true
+enable_dns_ssl    = false # requires domain_name + frontend_bucket_name below; needs enable_ecs = true
 
 # --- Networking ---
 vpc_cidr             = "10.0.0.0/16"
@@ -34,8 +35,16 @@ ecr_repository_names = ["backend", "frontend"]
 ecr_max_image_count  = 10
 
 # --- ECS ---
-# Leave blank for HTTP-only on the ALB, or set an ACM cert ARN for HTTPS.
+# Ignored once enable_dns_ssl = true (that path auto-creates and injects
+# its own api.<domain_name> cert into the ALB instead). Leave blank for
+# HTTP-only, or set an ACM cert ARN of your own for HTTPS without DNS/CDN.
 acm_certificate_arn = ""
+
+# Run the frontend as its own ECS/nginx service behind the ALB. Set to
+# false once enable_dns_ssl = true is serving app.<domain_name> from
+# S3+CloudFront instead - left as a toggle so you can flip back to
+# ECS-hosted frontend without re-adding deleted resources.
+enable_ecs_frontend = true
 
 # Bump these from CI after each image push, e.g. via
 # `terraform apply -var="backend_image_tag=$GIT_SHA"`
@@ -98,3 +107,12 @@ alarm_evaluation_periods = 3
 alarm_period_seconds     = 60
 app_log_group_name       = "/rent-a-ride/kubernetes/app"
 error_alarm_threshold    = 5
+
+# --- Domain / SSL / CloudFront+S3 (only used when enable_dns_ssl = true) ---
+# domain_name must already be a hosted zone in THIS AWS account's Route53
+# (i.e. your registrar's nameservers already point at it).
+# domain_name          = "rentaride.example.com"
+# app_subdomain        = "app"   # -> app.rentaride.example.com (S3+CloudFront)
+# api_subdomain        = "api"   # -> api.rentaride.example.com (ALB)
+# frontend_bucket_name = "rent-a-ride-frontend-<random suffix>" # must be globally unique
+# cloudfront_price_class = "PriceClass_100"

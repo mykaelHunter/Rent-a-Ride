@@ -14,6 +14,8 @@ import dayjs from "dayjs";
 import { toast } from "react-hot-toast";
 import { setVendorEditSuccess } from "../../../redux/vendor/vendorDashboardSlice";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 export default function VendorEditProductComponent() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -52,7 +54,7 @@ export default function VendorEditProductComponent() {
         tostID = toast.loading("saving...", { position: "bottom-center" });
         const formData = editData;
         const res = await fetch(
-          `/api/vendor/vendorEditVehicles/${vehicle_id}`,
+          `${BASE_URL}/api/vendor/vendorEditVehicles/${vehicle_id}`,
           {
             method: "PUT",
             headers: {

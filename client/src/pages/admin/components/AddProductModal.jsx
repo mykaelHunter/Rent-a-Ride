@@ -22,9 +22,11 @@ import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 import {  setLoading, setadminAddVehicleSuccess, setadminCrudError } from "../../../redux/adminSlices/adminDashboardSlice/StatusSlice";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 export const fetchModelData = async (dispatch) => {
   try {
-    const res = await fetch("/api/admin/getVehicleModels", {
+    const res = await fetch(`${BASE_URL}/api/admin/getVehicleModels`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -126,7 +128,7 @@ const AddProductModal = () => {
         tostID = toast.loading("saving...", { position: "bottom-center" });
         dispatch(setLoading(true))
       }
-      const res = await fetch("/api/admin/addProduct", {
+      const res = await fetch(`${BASE_URL}/api/admin/addProduct`, {
         method: "POST",
         body:formData
       });

@@ -4,18 +4,25 @@ metadata:
   name: rent-a-ride
   namespace: argocd
   annotations:
-    # Two images to track, aliased "backend" and "frontend" so the
-    # per-image annotations below can refer to them by short name.
-    argocd-image-updater.argoproj.io/image-list: "backend=mykaelhunter/rent-a-ride-backend:latest,frontend=mykaelhunter/rent-a-ride-client:latest"
+    # Only the green images are tracked by Image Updater. Blue
+    # (backend/frontend) is deliberately NOT in this list - it stays
+    # frozen at whatever's in values.yaml until you manually promote a
+    # verified green build into it (see values.yaml's rollout comment
+    # for the promotion steps). If blue were tracked too, it would climb
+    # to the same newest build number as green and there'd be nothing
+    # left to compare against.
+    argocd-image-updater.argoproj.io/image-list: "backend-green=mykaelhunter/rent-a-ride-backend,frontend-green=mykaelhunter/rent-a-ride-client"
 
-    # Both images are always pushed as :latest by the Jenkins pipeline
-    # (see the remediation report's Recommended Next Steps for the case
-    # for moving off :latest eventually) - "digest" is the update
-    # strategy that actually makes sense for a static tag, since it
-    # tracks when :latest's underlying content changes rather than
-    # comparing tag strings that never differ.
-    argocd-image-updater.argoproj.io/backend.update-strategy: digest
-    argocd-image-updater.argoproj.io/frontend.update-strategy: digest
+    # Jenkins tags images with the build number (e.g. "47"), not semver -
+    # "latest" strategy here means "pick the most recently pushed image",
+    # using each tag's creation timestamp rather than trying to parse the
+    # tag as a version string. allow-tags excludes the ":latest" tag
+    # itself from the candidate pool so it's comparing build-number tags
+    # against each other, not against the constantly-overwritten :latest.
+    argocd-image-updater.argoproj.io/backend-green.update-strategy: latest
+    argocd-image-updater.argoproj.io/backend-green.allow-tags: regexp:^[0-9]+$
+    argocd-image-updater.argoproj.io/frontend-green.update-strategy: latest
+    argocd-image-updater.argoproj.io/frontend-green.allow-tags: regexp:^[0-9]+$
 
     # Write updates back into helm/rent-a-ride/values.yaml itself,
     # as a git commit, rather than only as an Argo CD-side parameter
@@ -28,11 +35,11 @@ metadata:
 
     # Map each alias to the exact values.yaml keys the Helm chart
     # already reads (see helm/rent-a-ride/values.yaml and the
-    # backend-deployment.yaml / frontend-deployment.yaml templates).
-    argocd-image-updater.argoproj.io/backend.helm.image-name: backend.image.repository
-    argocd-image-updater.argoproj.io/backend.helm.image-tag: backend.image.tag
-    argocd-image-updater.argoproj.io/frontend.helm.image-name: frontend.image.repository
-    argocd-image-updater.argoproj.io/frontend.helm.image-tag: frontend.image.tag
+    # green-stack.yaml template).
+    argocd-image-updater.argoproj.io/backend-green.helm.image-name: backendGreen.image.repository
+    argocd-image-updater.argoproj.io/backend-green.helm.image-tag: backendGreen.image.tag
+    argocd-image-updater.argoproj.io/frontend-green.helm.image-name: frontendGreen.image.repository
+    argocd-image-updater.argoproj.io/frontend-green.helm.image-tag: frontendGreen.image.tag
 spec:
   project: default
 

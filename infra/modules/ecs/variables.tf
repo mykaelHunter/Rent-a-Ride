@@ -36,10 +36,22 @@ variable "log_retention_days" {
   default = 14
 }
 
+variable "enable_https" {
+  description = "Create the HTTPS listener (port 443) and redirect HTTP->HTTPS. Kept as its own bool rather than inferred from acm_certificate_arn != \"\" - the cert ARN can be a value only known after apply (e.g. from an ACM module in the same plan), and count/for_each can't depend on that. Pass a plan-time-known value here, e.g. var.enable_dns_ssl || var.acm_certificate_arn != \"\" computed in the caller from its own tfvars-level inputs."
+  type        = bool
+  default     = false
+}
+
 variable "acm_certificate_arn" {
-  description = "ACM certificate ARN for HTTPS on the ALB. Leave empty to serve HTTP only on port 80."
+  description = "ACM certificate ARN for HTTPS on the ALB. Only read when enable_https = true; ignored (HTTP-only) otherwise."
   type        = string
   default     = ""
+}
+
+variable "enable_frontend" {
+  description = "Create the frontend ECS service/task/target group and route the ALB's default action to it. Set false once the frontend is served from S3+CloudFront instead - the backend then becomes the ALB's default (and only) target, still reachable at the ALB's own DNS name / an api.<domain> alias. Kept as a toggle rather than deleting the resources so reverting to ECS-hosted frontend is a one-line change."
+  type        = bool
+  default     = true
 }
 
 # --- Backend ---

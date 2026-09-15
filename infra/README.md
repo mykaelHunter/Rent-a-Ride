@@ -18,8 +18,8 @@ infra/
     ├── networking/  # VPC, public/private subnets (2 AZs each), IGW, NAT, routing
     ├── bastion/     # bastion + private app EC2 host (the pre-ECS kind setup)
     ├── monitoring/  # CloudWatch alarms, SNS alerts, Grafana NLB for the app host
-    ├── ecr/         # ECR repositories (backend, frontend) + lifecycle policies
-    └── ecs/         # Fargate cluster, ALB, task defs, services for backend/frontend
+    ├── ecr/         # ECR repositories (backend, frontend) + lifecycle policies - see modules/ecr/README.md
+    └── ecs/         # Fargate cluster, ALB, task defs, services for backend/frontend - see modules/ecs/README.md
 ```
 
 `networking` is the only module every other module depends on, so it's
@@ -126,6 +126,78 @@ short-lived, iterative applies during development.
      -var="frontend_image_tag=$GIT_SHA"
    ```
    This updates the task definitions and triggers a new ECS deployment.
+
+## Remote state (S3 + locking)
+
+State lives in S3 (`backend.tf`), locked via Terraform's native S3
+locking (`use_lockfile = true`, requires Terraform >= 1.10 — this repo
+now pins that) so two people/pipelines can't `apply` at the same time
+and corrupt state. No DynamoDB table needed; the lock lives as a small
+companion object next to the state file in the same bucket.
+`infra/bootstrap/` is a separate, one-time root module that creates that
+bucket — it can't live in `infra/` itself, since `infra/`'s own backend
+can't create the very bucket it needs to store its state in.
+
+```bash
+cd infra/bootstrap
+terraform init
+terraform apply -var="state_bucket_name=rent-a-ride-tf-state-<pick-something-unique>"
+terraform output backend_config_snippet
+```
+
+Paste that output into `infra/backend.tf`'s `backend "s3"` block (it
+currently has placeholder values), then:
+
+```bash
+cd ../
+terraform init   # will prompt to migrate any existing local state into S3
+```
+
+Never re-run `bootstrap` after this — it's a create-once config. Keep
+`infra/bootstrap/terraform.tfstate` itself safe (its own state stays
+local by design); losing it just means a future `terraform import` of the
+bucket, not losing anything from `infra/`'s actual state.
+
+On an older Terraform (< 1.10), swap `use_lockfile = true` in
+`backend.tf` back for a `dynamodb_table = "..."` entry, and re-add an
+`aws_dynamodb_table` resource to `bootstrap/main.tf` — that's the
+locking mechanism every version from 0.12 onward supports.
+
+## Domain / SSL / CloudFront+S3 (`enable_dns_ssl`)
+
+Split-subdomain setup, requires a domain already hosted in this account's
+Route53 and `enable_ecs = true`:
+
+- `app.<domain_name>` → ACM cert (us-east-1) → CloudFront → private S3
+  bucket (the built `client/dist`)
+- `api.<domain_name>` → ACM cert (in `aws_region`) → straight to the ALB
+
+Two separate certs, not one cert with SANs, because CloudFront only
+accepts a cert from us-east-1 while an ALB listener needs one in its own
+region.
+
+```bash
+terraform apply \
+  -var="enable_dns_ssl=true" \
+  -var="domain_name=rentaride.example.com" \
+  -var="frontend_bucket_name=rent-a-ride-frontend-<unique suffix>"
+```
+
+Then build and sync the frontend:
+
+```bash
+cd client && npm run build && cd ..
+aws s3 sync client/dist s3://$(terraform output -raw frontend_bucket_name) --delete
+aws cloudfront create-invalidation \
+  --distribution-id $(terraform output -raw cloudfront_distribution_id) \
+  --paths "/index.html"   # hashed assets are long-cached; only index.html needs busting
+```
+
+The ECS frontend service (nginx container) is independent of this —
+toggle it off with `enable_ecs_frontend = false` once S3+CloudFront is
+serving `app.<domain_name>`, or leave it on to keep both paths working
+(e.g. testing the ALB path directly) since it costs nothing to keep
+disabled-but-present in the code.
 
 ## Prerequisites
 
@@ -310,11 +382,14 @@ This module only covers the EC2/kind app host — it doesn't monitor ECS.
 
 ## What's not covered here
 
-- No custom domain / Route 53 record for the ALB or Grafana NLB — point
-  your DNS at `alb_dns_name` / `grafana_url` manually, or extend the
-  relevant module.
+- No Route 53 record for the Grafana NLB — point your DNS at `grafana_url`
+  manually, or extend the `monitoring` module.
 - No auto-scaling policies on the ECS services — `*_desired_count` is
   static; add `aws_appautoscaling_target`/`policy` resources to the `ecs`
   module if you need that.
-- No CloudWatch alarms/monitoring for ECS itself — `monitoring` targets
-  the EC2/kind app host, not the Fargate services.
+- No CloudWatch alarms/monitoring for ECS itself, or for the CloudFront
+  distribution — `monitoring` targets the EC2/kind app host only.
+- No CI step to run the S3 sync / CloudFront invalidation from the
+  "Domain / SSL / CloudFront+S3" section automatically after a frontend
+  build — wire that into the Jenkins pipeline if you want deploys to be
+  one step.

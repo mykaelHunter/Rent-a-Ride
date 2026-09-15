@@ -9,6 +9,8 @@ import Box from "@mui/material/Box";
 import { useEffect } from "react";
 import { setUpdateRequestTable, setVenodrVehilces, setadminVenodrRequest } from "../../../redux/vendor/vendorDashboardSlice";
 
+const BASE_URL = import.meta.env.VITE_PRODUCTION_BACKEND_URL;
+
 
 
 
@@ -20,7 +22,7 @@ const VenderVehicleRequests = () => {
   useEffect(() => {
     const fetchVendorRequest = async () => {
       try {
-        const res = await fetch(`/api/admin/fetchVendorVehilceRequests`, {
+        const res = await fetch(`${BASE_URL}/api/admin/fetchVendorVehilceRequests`, {
           method: "GET",
         });
         if (!res.ok) {
@@ -46,7 +48,7 @@ const VenderVehicleRequests = () => {
   const handleApproveRequest = async (id) => {
     try {
       dispatch(setUpdateRequestTable(id))
-      const res = await fetch("/api/admin/approveVendorVehicleRequest", {
+      const res = await fetch(`${BASE_URL}/api/admin/approveVendorVehicleRequest`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -70,7 +72,7 @@ const VenderVehicleRequests = () => {
   const handleReject = async (id) => {
     try {
      
-      const res = await fetch("/api/admin/rejectVendorVehicleRequest", {
+      const res = await fetch(`${BASE_URL}/api/admin/rejectVendorVehicleRequest`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
