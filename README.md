@@ -10,8 +10,8 @@ deployments, four independent deployment paths (local, EC2+bastion, ECS
 Fargate, EKS), static hosting via S3+CloudFront, and full observability.
 
 For the deep "how do I actually deploy this" instructions, see
-**[`RUNBOOK.md`](RUNBOOK.md)**. For the system diagrams, see
-**[`ARCHITECTURE.md`](ARCHITECTURE.md)**. For the complete, incident-by-incident
+**[`RUNBOOK.md`](docs/RUNBOOK.md)**. For the system diagrams, see
+**[`ARCHITECTURE.md`](docs/ARCHITECTURE.md)**. For the complete, incident-by-incident
 history of every bug found and fixed along the way, see
 **[`docs/incident-log.md`](docs/incident-log.md)** and
 **[`docs/blue-green-deployment.md`](docs/blue-green-deployment.md)**.
@@ -78,7 +78,8 @@ On top of that remediation, the following was added, layer by layer:
 Rent-a-Ride/
 ├── backend/            Express API (MVC, JWT auth, Mongo/Mongoose)
 ├── client/             React (Vite) frontend
-├── docs/               Incident log, Jenkins setup, blue/green runbook
+├── docs/               Incident log, Jenkins setup, blue/green runbook,
+│                       architecture diagrams and runbook
 ├── k8s/                Raw Kubernetes manifests for kind (local/EC2)
 ├── helm/rent-a-ride/   Helm chart used everywhere from kind onward
 ├── argocd/             ArgoCD Application + Image Updater config
@@ -88,8 +89,7 @@ Rent-a-Ride/
 ├── monitoring/         CloudWatch and Prometheus/Grafana stacks (+ docs)
 ├── Jenkinsfile         CI/CD pipeline definition
 ├── docker-compose.yml  Local/single-host multi-container run
-├── RUNBOOK.md          Step-by-step deploy guide for all 4 environments
-└── ARCHITECTURE.md     Diagrams for every deployment topology
+
 ```
 
 ## 4. Deployment paths at a glance
