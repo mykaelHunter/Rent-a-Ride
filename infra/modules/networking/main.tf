@@ -36,6 +36,14 @@ resource "aws_subnet" "public" {
   tags = {
     Name = "${var.project_name}-public-subnet-${count.index}"
     Tier = "public"
+    # Required for the AWS Load Balancer Controller's subnet
+    # auto-discovery (see infra/modules/eks) - without this, it has no
+    # way to know which subnets it's allowed to place an internet-facing
+    # ALB in, and an Ingress just never gets an address. The
+    # kubernetes.io/cluster/<name> tag EKS needs alongside this is added
+    # automatically by the EKS service itself when the cluster is
+    # created against these subnets - not managed here.
+    "kubernetes.io/role/elb" = "1"
   }
 }
 
@@ -49,6 +57,10 @@ resource "aws_subnet" "private" {
   tags = {
     Name = "${var.project_name}-private-subnet-${count.index}"
     Tier = "private"
+    # Mirrors the public subnets' role/elb tag, for internal-facing
+    # ALBs/NLBs if any get added later - not needed by the current
+    # internet-facing Ingress, but costs nothing to have in place.
+    "kubernetes.io/role/internal-elb" = "1"
   }
 }
 
