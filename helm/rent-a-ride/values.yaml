@@ -54,10 +54,10 @@ storageClass:
 #      set rollout.enabled back to false - blue is now running the new
 #      version and green's Deployments are torn down until the next rollout.
 rollout:
-  enabled: true
+  enabled: false
   weights:
-    blue: 0
-    green: 100
+    blue: 100
+    green: 0
 mongo:
   # Whether this release owns a mongo StatefulSet/ConfigMap. Set to false
   # (see environments/values-green.yaml) for a release that shares another
