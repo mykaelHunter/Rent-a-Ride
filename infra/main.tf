@@ -244,6 +244,16 @@ resource "helm_release" "lb_controller" {
     name  = "vpcId"
     value = module.networking.vpc_id
   }
+
+  # Explicit, not just implicit-via-output-reference: the two `set`
+  # blocks above only create a dependency on whichever specific
+  # resources produce cluster_name/lb_controller_role_arn - not on
+  # aws_eks_access_entry.admin/aws_eks_access_policy_association.admin,
+  # sibling resources in the same module. Without this, Terraform can
+  # (and did) attempt this Helm install before this identity's
+  # cluster-admin RBAC was actually wired up, failing CRD creation as
+  # "forbidden".
+  depends_on = [module.eks]
 }
 
 module "ecs" {
