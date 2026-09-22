@@ -10,8 +10,8 @@ deployments, four independent deployment paths (local, EC2+bastion, ECS
 Fargate, EKS), static hosting via S3+CloudFront, and full observability.
 
 For the deep "how do I actually deploy this" instructions, see
-**[`docs/RUNBOOK.md`](RUNBOOK.md)**. For the system diagrams, see
-**[`docs/ARCHITECTURE.md`](ARCHITECTURE.md)**. For the complete, incident-by-incident
+**[`RUNBOOK.md`](docs/RUNBOOK.md)**. For the system diagrams, see
+**[`ARCHITECTURE.md`](docs/ARCHITECTURE.md)**. For the complete, incident-by-incident
 history of every bug found and fixed along the way, see
 **[`docs/incident-log.md`](docs/incident-log.md)** and
 **[`docs/blue-green-deployment.md`](docs/blue-green-deployment.md)**.
